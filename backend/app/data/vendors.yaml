@@ -1,0 +1,273 @@
+# Global vendor dictionary. Each entry: key, name, category, default_cycle, aliases (regex, case-insensitive,
+# matched against the cleaned payee), optional flags. Categories: cad, erp, office, security, cloud, domain,
+# communication, hr, design, compliance, amc, telecom, dev, other.
+# entity_type: domestic | foreign_gst (foreign vendor registered for Indian GST) | foreign_no_gst (reverse charge)
+
+vendors:
+  # ---------- CAD / CAM ----------
+  - {key: solidworks, name: SolidWorks (Dassault), category: cad, default_cycle: yearly,
+     aliases: ['DASSAULT', 'SOLIDWORKS', '3DS\*', '3DEXPERIENCE'], pay_url: 'https://www.solidworks.com/how-to-buy'}
+  - {key: autodesk, name: Autodesk (AutoCAD / Fusion / Inventor), category: cad, default_cycle: yearly,
+     aliases: ['AUTODESK', 'ADSK\*?', 'AUTOCAD', 'FUSION 360'], pay_url: 'https://manage.autodesk.com'}
+  - {key: ptc, name: PTC Creo, category: cad, default_cycle: yearly, aliases: ['PTC INC', 'PTC SOFTWARE', 'PARAMETRIC TECH']}
+  - {key: siemens_dis, name: Siemens NX / Solid Edge, category: cad, default_cycle: yearly, aliases: ['SIEMENS INDUSTRY SOFTWARE', 'SOLID EDGE', 'SIEMENS DIGITAL']}
+  - {key: mastercam, name: Mastercam, category: cad, default_cycle: yearly, aliases: ['MASTERCAM', 'CNC SOFTWARE']}
+  - {key: zwcad, name: ZWCAD / BricsCAD / GstarCAD, category: cad, default_cycle: yearly, aliases: ['ZWSOFT', 'ZWCAD', 'BRICSYS', 'BRICSCAD', 'GSTARCAD']}
+  - {key: draftsight, name: DraftSight, category: cad, default_cycle: yearly, aliases: ['DRAFTSIGHT']}
+  - {key: ansys, name: Ansys, category: cad, default_cycle: yearly, aliases: ['ANSYS']}
+
+  # ---------- ERP / accounting ----------
+  - {key: tally, name: Tally (TSS / licence), category: erp, default_cycle: yearly,
+     aliases: ['TALLY SOLUTIONS', 'TALLYSOLUTIONS', 'TALLY SOL', 'TALLYPRIME', 'TALLY\.?RZP', 'TALLY ERP'], pay_url: 'https://tallysolutions.com/renew/'}
+  - {key: busy, name: Busy Accounting, category: erp, default_cycle: yearly, aliases: ['BUSY INFOTECH', 'BUSY ACCOUNTING', 'BUSY\.IN']}
+  - {key: marg, name: Marg ERP, category: erp, default_cycle: yearly, aliases: ['MARG ERP', 'MARG COMPUSOFT', 'MARGBOOKS']}
+  - {key: sap_b1, name: SAP Business One, category: erp, default_cycle: yearly, aliases: ['SAP INDIA', 'SAP BUSINESS ONE', 'SAP SE']}
+  - {key: zoho, name: Zoho, category: erp, default_cycle: monthly, aliases: ['ZOHO CORP', 'ZOHO\*', 'ZOHOCORP', 'ZOHO CORPORATION', 'ZOHO BOOKS', 'ZOHO ONE', 'ZOHO MAIL', 'ZOHO PEOPLE', 'ZOHO PAYROLL', 'ZOHO CRM'], pay_url: 'https://accounts.zoho.in'}
+  - {key: odoo, name: Odoo, category: erp, default_cycle: yearly, aliases: ['ODOO SA', 'ODOO INDIA', 'ODOO S\.A']}
+  - {key: erpnext, name: ERPNext (Frappe), category: erp, default_cycle: monthly, aliases: ['FRAPPE TECH', 'FRAPPECLOUD', 'FRAPPE CLOUD']}
+  - {key: vyapar, name: Vyapar, category: erp, default_cycle: yearly, aliases: ['VYAPAR', 'SIMPLY VYAPAR']}
+  - {key: cleartax, name: ClearTax, category: compliance, default_cycle: yearly, aliases: ['DEFMACRO', 'CLEARTAX', 'CLEAR TAX']}
+  - {key: iris, name: IRIS GST, category: compliance, default_cycle: yearly, aliases: ['IRIS BUSINESS SERV', 'IRIS GST']}
+  - {key: quickbooks, name: Intuit QuickBooks, category: erp, default_cycle: monthly, aliases: ['INTUIT', 'QUICKBOOKS'], entity_type: foreign_no_gst, currency: USD}
+
+  # ---------- Office / email ----------
+  - {key: microsoft365, name: Microsoft 365, category: office, default_cycle: monthly,
+     aliases: ['MSFT\s?\*', 'MSFT E0', 'MICROSOFT\s?\*', 'MICROSOFT 365', 'MICROSOFT OFFICE', 'MSBILL', 'MICROSOFT SERVICES', 'MICROSOFT REGIONAL', 'MICROSOFT CORP', 'OFFICE 365', 'M365'],
+     entity_type: foreign_gst, pay_url: 'https://admin.microsoft.com/#/billoverview'}
+  - {key: azure, name: Microsoft Azure, category: cloud, default_cycle: monthly, variable: true, aliases: ['MSFT\s?\*?AZURE', 'MICROSOFT\s?\*?AZURE', 'AZURE'], pay_url: 'https://portal.azure.com'}
+  - {key: google_workspace, name: Google Workspace, category: office, default_cycle: monthly,
+     aliases: ['GOOGLE\s?\*\s?WORKSPACE', 'GOOGLE\s?\*\s?GSUITE', 'GOOGLE\s?\*\s?SERVICES', 'GOOGLE WORKSPACE', 'GSUITE', 'GOOGLE INDIA DIGITAL', 'GOOGLE CLOUD INDIA'],
+     pay_url: 'https://admin.google.com/ac/billing'}
+  - {key: google_cloud, name: Google Cloud, category: cloud, default_cycle: monthly, variable: true, aliases: ['GOOGLE\s?\*\s?CLOUD', 'GOOGLE CLOUD PLATFORM', 'GCP']}
+  - {key: rediffmail, name: Rediffmail Pro, category: office, default_cycle: yearly, aliases: ['REDIFF']}
+  - {key: dropbox, name: Dropbox, category: office, default_cycle: monthly, aliases: ['DROPBOX'], entity_type: foreign_no_gst, currency: USD}
+
+  # ---------- Security ----------
+  - {key: quickheal, name: Quick Heal / Seqrite, category: security, default_cycle: yearly, aliases: ['QUICK HEAL', 'QUICKHEAL', 'SEQRITE']}
+  - {key: kaspersky, name: Kaspersky, category: security, default_cycle: yearly, aliases: ['KASPERSKY']}
+  - {key: eset, name: ESET, category: security, default_cycle: yearly, aliases: ['ESET ']}
+  - {key: bitdefender, name: Bitdefender, category: security, default_cycle: yearly, aliases: ['BITDEFENDER']}
+  - {key: sophos, name: Sophos, category: security, default_cycle: yearly, aliases: ['SOPHOS']}
+  - {key: norton, name: Norton / McAfee, category: security, default_cycle: yearly, aliases: ['NORTON', 'MCAFEE', 'NORTONLIFELOCK', 'GEN DIGITAL']}
+  - {key: trendmicro, name: Trend Micro, category: security, default_cycle: yearly, aliases: ['TREND MICRO']}
+  - {key: fortinet, name: Fortinet, category: security, default_cycle: yearly, aliases: ['FORTINET']}
+  - {key: acronis, name: Acronis, category: security, default_cycle: yearly, aliases: ['ACRONIS']}
+
+  # ---------- Cloud / hosting / domains ----------
+  - {key: aws, name: Amazon Web Services, category: cloud, default_cycle: monthly, variable: true,
+     aliases: ['AMAZON WEB SERV', 'AMAZON INTERNET SERV', 'AISPL', 'AWS EMEA', 'AWS INDIA', '\bAWS\b'], pay_url: 'https://console.aws.amazon.com/billing'}
+  - {key: digitalocean, name: DigitalOcean, category: cloud, default_cycle: monthly, variable: true, aliases: ['DIGITALOCEAN'], entity_type: foreign_no_gst, currency: USD}
+  - {key: linode, name: Linode / Akamai, category: cloud, default_cycle: monthly, variable: true, aliases: ['LINODE', 'AKAMAI'], entity_type: foreign_no_gst, currency: USD}
+  - {key: vultr, name: Vultr, category: cloud, default_cycle: monthly, variable: true, aliases: ['VULTR'], entity_type: foreign_no_gst, currency: USD}
+  - {key: hetzner, name: Hetzner, category: cloud, default_cycle: monthly, variable: true, aliases: ['HETZNER'], entity_type: foreign_no_gst, currency: EUR}
+  - {key: godaddy, name: GoDaddy, category: domain, default_cycle: yearly, aliases: ['GODADDY', 'DNH\*GODADDY', 'GO DADDY'], pay_url: 'https://account.godaddy.com/renewals'}
+  - {key: hostinger, name: Hostinger, category: domain, default_cycle: yearly, intro_pricing: true, aliases: ['HOSTINGER']}
+  - {key: bigrock, name: BigRock, category: domain, default_cycle: yearly, aliases: ['BIGROCK', 'BIG ROCK']}
+  - {key: bluehost, name: Bluehost / HostGator, category: domain, default_cycle: yearly, intro_pricing: true, aliases: ['BLUEHOST', 'HOSTGATOR', 'ENDURANCE INTERNATIONAL', 'NEWFOLD']}
+  - {key: namecheap, name: Namecheap, category: domain, default_cycle: yearly, aliases: ['NAMECHEAP'], entity_type: foreign_no_gst, currency: USD}
+  - {key: cloudflare, name: Cloudflare, category: cloud, default_cycle: monthly, aliases: ['CLOUDFLARE'], entity_type: foreign_no_gst, currency: USD}
+  - {key: ssl, name: SSL certificate, category: domain, default_cycle: yearly, aliases: ['SSLS\.COM', 'SECTIGO', 'DIGICERT', 'COMODO']}
+
+  # ---------- Communication ----------
+  - {key: zoom, name: Zoom, category: communication, default_cycle: monthly, aliases: ['ZOOM\.US', 'ZOOM VIDEO', 'ZOOM COMM'], entity_type: foreign_gst}
+  - {key: whatsapp_bsp, name: WhatsApp API (BSP), category: communication, default_cycle: monthly, variable: true, prepaid: true,
+     aliases: ['INTERAKT', 'HAPTIK', '\bWATI\b', 'AISENSY', 'GUPSHUP', 'TWILIO', 'META PLATFORMS', 'FACEBK']}
+  - {key: exotel, name: Exotel / cloud telephony, category: communication, default_cycle: monthly, variable: true, prepaid: true,
+     aliases: ['EXOTEL', 'KNOWLARITY', 'MYOPERATOR', 'VOICETREE', 'OZONETEL']}
+  - {key: sms_gateway, name: SMS credits, category: communication, default_cycle: irregular, variable: true, prepaid: true,
+     aliases: ['MSG91', 'WALKOVER', 'TEXTLOCAL', 'IMIMOBILE', 'KALEYRA', 'FAST2SMS', 'VALUE FIRST', 'VALUEFIRST']}
+  - {key: slack, name: Slack, category: communication, default_cycle: monthly, aliases: ['SLACK TECH', '\bSLACK\b'], entity_type: foreign_no_gst, currency: USD}
+  - {key: notion, name: Notion, category: office, default_cycle: monthly, aliases: ['NOTION LABS'], entity_type: foreign_no_gst, currency: USD}
+  - {key: atlassian, name: Atlassian (Jira / Confluence), category: dev, default_cycle: monthly, aliases: ['ATLASSIAN'], entity_type: foreign_no_gst, currency: USD}
+  - {key: github, name: GitHub, category: dev, default_cycle: monthly, aliases: ['GITHUB'], entity_type: foreign_no_gst, currency: USD}
+  - {key: openai, name: OpenAI, category: dev, default_cycle: monthly, variable: true, aliases: ['OPENAI'], entity_type: foreign_no_gst, currency: USD}
+  - {key: anthropic, name: Anthropic, category: dev, default_cycle: monthly, variable: true, aliases: ['ANTHROPIC'], entity_type: foreign_no_gst, currency: USD}
+  - {key: airtel, name: Airtel (broadband / SIM), category: telecom, default_cycle: monthly, variable: true, aliases: ['BHARTI AIRTEL', 'AIRTEL']}
+  - {key: jio, name: Jio, category: telecom, default_cycle: monthly, variable: true, aliases: ['RELIANCE JIO', '\bJIO\b']}
+  - {key: tata_tele, name: Tata Tele / Tata Comm, category: telecom, default_cycle: monthly, variable: true, aliases: ['TATA TELE', 'TATA COMM']}
+  - {key: bsnl, name: BSNL, category: telecom, default_cycle: monthly, variable: true, aliases: ['BSNL']}
+  - {key: isp_other, name: Broadband (ACT / Hathway / local ISP), category: telecom, default_cycle: monthly, variable: true, aliases: ['ACT FIBERNET', 'ATRIA CONVERGENCE', 'HATHWAY', 'EXCITEL', 'YOU BROADBAND']}
+
+  # ---------- HR / payroll ----------
+  - {key: greythr, name: GreytHR, category: hr, default_cycle: monthly, aliases: ['GREYTIP', 'GREYTHR']}
+  - {key: keka, name: Keka HR, category: hr, default_cycle: monthly, aliases: ['KEKA']}
+  - {key: kredily, name: Kredily / sumHR / factoHR / Pocket HRMS, category: hr, default_cycle: monthly, aliases: ['KREDILY', 'SUMHR', 'FACTOHR', 'POCKET HRMS']}
+  - {key: essl, name: ESSL biometric / attendance cloud, category: hr, default_cycle: yearly, aliases: ['ESSL', 'MATRIX COMSEC', 'ZKTECO']}
+
+  # ---------- Design ----------
+  - {key: adobe, name: Adobe Creative Cloud / Acrobat, category: design, default_cycle: monthly,
+     aliases: ['ADOBE'], entity_type: foreign_gst, currency: USD, pay_url: 'https://account.adobe.com/plans'}
+  - {key: canva, name: Canva, category: design, default_cycle: yearly, aliases: ['CANVA'], entity_type: foreign_no_gst}
+  - {key: corel, name: CorelDRAW, category: design, default_cycle: yearly, aliases: ['COREL', 'ALLUDO']}
+  - {key: figma, name: Figma, category: design, default_cycle: monthly, aliases: ['FIGMA'], entity_type: foreign_no_gst, currency: USD}
+
+  # ---------- Compliance / misc ----------
+  - {key: dsc, name: Digital signature (DSC), category: compliance, default_cycle: biennial, aliases: ['EMUDHRA', 'SIFY', 'CAPRICORN IDENTITY', 'VSIGN', 'XTRUST']}
+  - {key: tds_software, name: TDS / tax software, category: compliance, default_cycle: yearly, aliases: ['SARAL', 'WINMAN', 'COMPUTAX', 'RELYON']}
+  - {key: apple, name: Apple (App Store), category: other, default_cycle: monthly, aliases: ['APPLE\.COM/BILL', 'APPLE COM BILL', 'ITUNES']}
+  - {key: google_play, name: Google Play (app subscriptions), category: other, default_cycle: monthly, aliases: ['GOOGLE\s?\*\s?(?!WORKSPACE|GSUITE|CLOUD|SERVICES)']}
+  - {key: linkedin, name: LinkedIn, category: other, default_cycle: monthly, aliases: ['LINKEDIN'], entity_type: foreign_gst}
+  - {key: indiamart, name: IndiaMART / TradeIndia, category: other, default_cycle: yearly, aliases: ['INDIAMART', 'TRADEINDIA']}
+  - {key: justdial, name: Justdial, category: other, default_cycle: yearly, aliases: ['JUSTDIAL', 'JUST DIAL']}
+
+  # ---------- Special buckets (no aliases; reached via narration hints or user answers) ----------
+  - {key: it_amc, name: IT support AMC (local vendor), category: amc, default_cycle: yearly, aliases: []}
+  - {key: web_amc, name: Website AMC / web agency, category: domain, default_cycle: yearly, aliases: []}
+  - {key: hardware, name: Hardware / one-time purchase, category: other, default_cycle: one_time, aliases: []}
+  - {key: not_it, name: Not IT, category: other, default_cycle: yearly, exclude: true, aliases: []}
+
+# Things that look like payments but are never subscriptions -> dropped before the user sees them.
+exclude_patterns:
+  - 'CONSOLIDATED CHARGES'
+  - 'SMS ALERT'
+  - 'ALERT CHG'
+  - 'ANNUAL FEE'
+  - 'DEBIT CARD FEE'
+  - 'BANK CHARGES'
+  - 'SERVICE CHARGE'
+  - 'INTEREST'
+  - 'CBDT'
+  - 'OLTAS'
+  - 'TIN NSDL'
+  - 'TDS CHALLAN'
+  - 'GST PMT'
+  - 'GSTPMT'
+  - 'BHARATKOSH'
+  - 'MCA21'
+  - 'EPFO'
+  - 'ESIC'
+  - 'PROFESSIONAL TAX'
+  - 'SALARY'
+  - 'RENT'
+  - 'ELECTRICITY'
+  - 'TSSPDCL'
+  - 'APSPDCL'
+  - 'TANGEDCO'
+  - 'MSEDCL'
+  - 'LIC OF INDIA'
+  - 'INSURANCE'
+  - 'EMI'
+  - 'LOAN'
+  - 'PETROL'
+  - 'HPCL'
+  - 'BPCL'
+  - 'IOCL'
+  - 'SWIGGY'
+  - 'ZOMATO'
+  - 'UBER'
+  - 'OLA '
+  - 'IRCTC'
+  - 'MAKEMYTRIP'
+  - 'INDIGO'
+  - 'FLIPKART'
+  - '^AMAZON PAY'
+  - 'AMAZON SELLER'
+  - 'AMAZON\.IN'
+  - 'CASH WITHDRAWAL'
+  - 'ATM WDL'
+  - 'ATM-CASH'
+  - 'CHEQUE RETURN'
+  - 'REVERSAL'
+
+# Forex markup lines that belong to the previous foreign-currency debit.
+fee_patterns:
+  - 'MARKUP'
+  - 'DCC '
+  - 'FOREX FEE'
+  - 'FX FEE'
+  - 'CROSS CURRENCY'
+
+# Payment gateways: strip the prefix, try the remainder; else ask.
+gateway_patterns:
+  - 'RAZORPAY'
+  - 'RAZ\*'
+  - 'RZP'
+  - 'PAYU'
+  - 'CCAVENUE'
+  - 'AVENUES INDIA'
+  - 'CASHFREE'
+  - 'INSTAMOJO'
+  - 'PAYTM'
+  - 'PHONEPE'
+  - 'BILLDESK'
+  - 'STRIPE'
+  - 'PAYPAL'
+  - 'EASEBUZZ'
+
+# Words that suggest a payee is a local IT reseller / dealer / system integrator (product unknown until confirmed).
+reseller_hint_words:
+  - INFOTECH
+  - INFOSYSTEM
+  - INFOSYS
+  - COMPUTERS
+  - COMPUTER
+  - TECHNOLOGIES
+  - TECHNOLOGY
+  - TECHNO
+  - SOFTWARES
+  - SOFTWARE
+  - SYSTEMS
+  - SOLUTIONS
+  - IT SERVICES
+  - IT SOLUTIONS
+  - DIGITAL
+  - CAD
+  - AUTOMATION
+  - NETWORKS
+  - TECH
+
+# Known Indian resellers / partners and what they typically sell (grows with every deployment).
+resellers:
+  - {name: CADSPRO, sells: [solidworks]}
+  - {name: BEACON INDIA, sells: [solidworks]}
+  - {name: CONCEPTIA, sells: [solidworks]}
+  - {name: EGS COMPUTERS, sells: [solidworks, ptc]}
+  - {name: CADD CENTRE, sells: [solidworks, autodesk]}
+  - {name: CAPRICOT, sells: [autodesk]}
+  - {name: ARKANCE, sells: [autodesk]}
+  - {name: ADROITEC, sells: [ptc]}
+  - {name: NEILSOFT, sells: [ptc, autodesk]}
+  - {name: UNEECOPS, sells: [sap_b1]}
+  - {name: COGNITIVE, sells: [sap_b1]}
+  - {name: REDINGTON, sells: [microsoft365, quickheal, adobe]}
+  - {name: INGRAM MICRO, sells: [microsoft365, adobe, autodesk]}
+  - {name: SAVEX, sells: [microsoft365, quickheal]}
+  - {name: ANTRAWEB, sells: [tally]}
+  - {name: MARK IT SOLUTIONS, sells: [tally]}
+  - {name: TALLYSTACK, sells: [tally]}
+
+# Amount fingerprints: exact amounts that identify a product (incl. 18% GST where noted). Tolerance ±1%.
+fingerprints:
+  - {amount: 5310, vendor: tally, product: 'TSS Silver renewal (₹4,500 + GST)', cycle: yearly}
+  - {amount: 4500, vendor: tally, product: 'TSS Silver renewal', cycle: yearly}
+  - {amount: 15930, vendor: tally, product: 'TSS Gold renewal (₹13,500 + GST)', cycle: yearly}
+  - {amount: 13500, vendor: tally, product: 'TSS Gold renewal', cycle: yearly}
+  - {amount: 26550, vendor: tally, product: 'TallyPrime Silver licence (₹22,500 + GST)', cycle: one_time}
+  - {amount: 22500, vendor: tally, product: 'TallyPrime Silver licence', cycle: one_time}
+  - {amount: 79650, vendor: tally, product: 'TallyPrime Gold licence (₹67,500 + GST)', cycle: one_time}
+  - {amount: 67500, vendor: tally, product: 'TallyPrime Gold licence', cycle: one_time}
+
+# Product hints from narration / ledger text -> (vendor, product)
+narration_hints:
+  - {pattern: 'TSS|TALLY SOFTWARE SERV', vendor: tally, product: 'TSS renewal'}
+  - {pattern: 'TALLY', vendor: tally}
+  - {pattern: 'SOLIDWORKS|SOLID WORKS', vendor: solidworks, product: 'SolidWorks subscription service'}
+  - {pattern: 'AUTOCAD|AUTO CAD|FUSION|INVENTOR', vendor: autodesk}
+  - {pattern: 'OFFICE 365|O365|M365|MICROSOFT 365|BUSINESS STANDARD|BUSINESS BASIC', vendor: microsoft365}
+  - {pattern: 'WORKSPACE|G ?SUITE', vendor: google_workspace}
+  - {pattern: 'SEQRITE|QUICK ?HEAL|ENDPOINT SEC|ANTIVIRUS|ANTI VIRUS', vendor: quickheal}
+  - {pattern: 'KASPERSKY', vendor: kaspersky}
+  - {pattern: 'ADOBE|ACROBAT|PHOTOSHOP|CREATIVE CLOUD', vendor: adobe}
+  - {pattern: 'DOMAIN|HOSTING|SSL', vendor: godaddy, product: 'Domain / hosting'}
+  - {pattern: 'SAP B1|SAP BUSINESS ONE|SAP AMC', vendor: sap_b1, product: 'SAP B1 maintenance'}
+  - {pattern: 'ZOHO', vendor: zoho}
+  - {pattern: '\bAWS\b|AMAZON WEB', vendor: aws}
+  - {pattern: 'AZURE', vendor: azure}
+  - {pattern: 'ZOOM', vendor: zoom}
+  - {pattern: 'WEBSITE AMC|WEB AMC|WEBSITE MAINT', vendor: web_amc, product: 'Website AMC'}
+  - {pattern: 'IT AMC|COMPUTER AMC|\bAMC\b|ANNUAL MAINT|MAINTENANCE CONTRACT|IT SUPPORT', vendor: it_amc, product: 'IT support AMC'}
+  - {pattern: 'LAPTOP|DESKTOP|PRINTER|SERVER HARDWARE|CCTV', vendor: hardware, product: 'Hardware purchase'}
+  - {pattern: 'LICEN[CS]E|SUBSCRIPTION|RENEWAL', product: 'Licence / subscription'}
+
+# Words in a reseller line-item that mean hardware (excluded from subscriptions)
+hardware_words: [LAPTOP, DESKTOP, PRINTER, TONER, CARTRIDGE, RAM, SSD, HDD, MONITOR, KEYBOARD, MOUSE, CABLE, ROUTER, SWITCH, UPS, BATTERY, CCTV, CAMERA, SERVER HARDWARE, MOTHERBOARD]
