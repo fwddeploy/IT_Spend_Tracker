@@ -1,133 +1,112 @@
-# IT Tracker
+# IT Spend Tracker
 
-One screen that shows a small factory every software / licence it pays for, what goes out this month, what is due next — built from files they already have (bank statement, Tally export), with nothing to install on their side.
+**One screen that shows a small factory every software licence and subscription it pays for — what goes out this month, what is due next — and reminds the owner on WhatsApp before a renewal lapses.**
+
+Built for Indian MSMEs and manufacturing units (20–300 staff) who pay for SolidWorks, AutoCAD, Tally, Microsoft 365, SAP B1 AMC, antivirus, cloud, domains… through a mix of resellers, NEFT, cards and UPI, and today have no single view of it.
+
+Nothing is installed at the customer. They upload the files they already have (bank statement Excel, Tally purchase register); the engine does the rest.
 
 ```
-messy payments in  →  one engine  →  one clean list + due dates + reminders
+messy payments in  →  one engine  →  one clean list + due dates + WhatsApp reminders
 ```
 
-## Run it (Docker, recommended)
+<p align="center">
+  <img src="docs/screenshots/home.png" width="800" alt="Home: going out this month, monthly-equivalent, next dues, cash-out by month">
+</p>
+
+## Quick start (Docker — 2 minutes)
 
 ```bash
+git clone https://github.com/fwddeploy/IT_Spend_Tracker.git
+cd IT_Spend_Tracker
 docker compose up --build
-# open http://localhost:8000  — a sample factory is already loaded
-# log in as  demo@ittracker.local / demo1234
 ```
 
-## Run it (local dev)
+Open <http://localhost:8000> and log in with the demo account:
+
+```
+demo@ittracker.local / demo1234
+```
+
+A sample factory with 24 months of bank data and a Tally register is already loaded, so every screen is full. Register your own user from the login page to start a fresh company.
+
+## Quick start (local development)
 
 ```bash
-# backend (SQLite by default; set DATABASE_URL for Postgres — see .env.example)
+# backend — Python 3.11+. SQLite by default; set DATABASE_URL for Postgres (see .env.example)
 cd backend
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 
-# frontend (dev server proxies /api to :8000)
+# frontend — Node 20+ (dev server proxies /api to :8000)
 cd frontend
 npm install
-npm run dev          # http://localhost:5173
-npm run build        # -> frontend/dist, served by the backend at http://localhost:8000
+npm run dev            # http://localhost:5173
+npm run build          # -> frontend/dist, which the backend serves at :8000
 ```
 
-Tests:
+Run the tests (107, on SQLite; the same suite runs on Postgres):
 
 ```bash
-cd backend
-python -m pytest -q                 # engine cases + end-to-end API flows (SQLite temp files)
-DATABASE_URL=postgresql+psycopg2://ittracker:ittracker@localhost:5432/ittracker python -m pytest -q   # same suite on Postgres (drops + recreates the schema)
+cd backend && python -m pytest -q
 ```
 
-## Login, roles, demo account
+## What it does
 
-Every `/api` route needs a login (cookie session, 30 days) — except `/api/auth/*` and `/api/health`.
-
-- **Demo**: on an empty database the app seeds a sample factory (`SEED_SAMPLE=1`, the default) owned by
-  **demo@ittracker.local / demo1234** (also printed in the startup log). Set `SEED_SAMPLE=0` to start empty and
-  register your own account at `POST /api/auth/register` (this creates your first company).
-- **Roles** per company: `owner` (everything, incl. settings, delete, invite), `accountant` (upload, edit lines, answer
-  questions, send reminders), `viewer` (read only). Owners invite people with `POST /api/auth/invite` — a new user gets a
-  one-time password in the response (no email sending in this build).
-- **Scripts**: if `APP_ACCESS_KEY` is set, requests carrying `X-Access-Key: <key>` are treated as an owner of every company.
-- Set `SECRET_KEY` in production (it signs the cookie); `COOKIE_SECURE=1` behind HTTPS.
-
-## Reminders (WhatsApp / email)
-
-A scheduler inside the app runs every hour (`SCHEDULER=0` disables it). For each company with a channel switched on in
-Settings (`owner_phone` + `whatsapp_enabled`, `owner_email`/`accountant_email` + `email_enabled`), it sends a reminder for every
-line with the bell on when `next_due - today` equals the configured days-before (monthly 5 / quarterly 10 / yearly 30 by
-default), and again every 7 days while a line is overdue. Each send is written to the reminder log (status `sent`, `failed`
-or `skipped_not_configured`); `GET /api/companies/{id}/reminders` previews what will go out, `POST .../reminders/send-now`
-sends one line immediately, `POST /api/internal/reminders/run` runs the whole loop by hand.
-
-Environment (all optional — without them reminders are logged as `skipped_not_configured`, nothing breaks):
-
-| Channel | Variables |
+| You do | It does |
 |---|---|
-| WhatsApp (Meta Cloud API) | `WA_PHONE_NUMBER_ID`, `WA_TOKEN`, optional `WA_TEMPLATE_NAME` (approved template; empty = plain text message, POC), `WA_TEMPLATE_LANG=en`, `WA_API_VERSION=v20.0` |
-| Email (SMTP) | `SMTP_HOST`, `SMTP_PORT` (587 STARTTLS / 465 SSL / 25 plain), `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` |
+| Upload a bank statement (Excel / CSV / PDF) or a Tally purchase register (Excel / XML) | Detects the bank and the columns, drops non-IT lines (salary, raw material, GST, bank charges) |
+| Nothing else | Recognises the vendor behind each payment — even through resellers ("Shree Infotech ₹5,310" = Tally TSS) and payment gateways |
+| | Merges the same bill seen in bank + Tally, understanding GST, TDS, forex markup, refunds, split payments |
+| | Finds what repeats: monthly / quarterly / yearly / 3-yearly / prepaid credits, with next due date and a confidence score |
+| Answer a short question only when it really can't tell | Learns the answer for next time |
+| Glance at Home | "Going out this month" and "monthly-equivalent" side by side, next dues, 12-month cash-out, FY view |
+| Set owner's WhatsApp / email in Settings | Reminders go out before every due date; overdue lines get a weekly nudge |
 
-See `.env.example` for the full list.
+More screens: [needs-attention inbox](docs/screenshots/attention.png) · [settings & reminders](docs/screenshots/settings-reminders.png) · [phone](docs/screenshots/phone.png)
 
-## Export, FY view, share
+## How it works (one paragraph)
 
-- `GET /api/companies/{id}/export.xlsx` — Excel with Lines, Upcoming (12 months), Payments, Questions.
-- `GET /api/companies/{id}/dashboard?fy=2026` — financial-year view (start month from Settings; past months show actual
-  payments, future months the dues).
-- `GET /api/companies/{id}/share-text` — a WhatsApp-ready summary for the owner.
-- `GET /api/companies/{id}/events` — audit log of edits, uploads, answers and settings changes.
+Every uploaded line becomes a **raw row**. The engine cleans the narration into a payee name (`NEFT-N0001-SHREE INFOTECH-TSS` → `SHREE INFOTECH`), looks the payee up in a vendor dictionary (aliases, reseller list, known list prices, narration words, answers the user gave before), merges duplicates across sources into **payments**, groups repeating payments into **lines** (one per licence/subscription) with a cycle, expected amount, next due and status, and raises a **question** only for what it cannot resolve. User edits are kept across re-runs. Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full picture.
 
-## Database
-
-Postgres in production: the schema is managed by Alembic (`backend/alembic/`); the app runs `alembic upgrade head` on
-start (a database created by v0.1 is adopted automatically). SQLite dev/tests use `create_all`. To add a column: edit
-`models.py`, then `cd backend && DATABASE_URL=... alembic revision --autogenerate -m "what changed"`.
-
-See `docs/REVIEW-v0.1.md` for what was reviewed, fixed and what is still open, and `docs/API-v2-additions.md` for the v2 API.
-
-## What's inside
+## Project layout
 
 ```
-backend/
-  app/
-    main.py            FastAPI app; serves API + built frontend
-    models.py          Company, User, Membership, Account, RawRow, Vendor, VendorAlias, Occurrence, Stream, Question,
-                       ReminderLog, Event
-    auth.py            bcrypt passwords, signed-cookie sessions, roles (owner / accountant / viewer)
-    reminders.py       what is due for a nudge; WhatsApp (Meta Cloud API) + email (SMTP) senders; hourly run
-    export.py          Excel export
-    data/vendors.yaml  vendor dictionary: aliases, categories, default cycles, resellers, amount fingerprints,
-                       narration hints, exclusions (bank fees, government, salary…), gateways
-    parsers/           Excel/CSV/PDF statement + Tally register auto-detect; Tally XML
-    engine/
-      normalize.py     clean a bank narration into a payee name; detect payment mode
-      vendors.py       who is this vendor? alias → gateway → reseller → narration → fingerprint → fuzzy → ask
-      dedupe.py        same bill in bank + Tally + email → one payment; GST/TDS/forex/refund/split rules
-      recurrence.py    does it repeat? cycle, expected amount, next due, confidence
-      status.py        active / due soon / overdue / stopped / cancelled…; cash-out vs monthly-equivalent
-      runner.py        DB orchestration; user edits are never overwritten; needs-attention questions
-    sample.py          realistic sample company (also writes backend/samples/*.xlsx)
-  tests/               62 engine/parser cases from the research + end-to-end API flows
-frontend/              Vite + React + TS: Home, Lines, Upcoming, Attention, Upload
-  alembic/             Postgres migrations
-docs/API.md            API contract (v1) · docs/API-v2-additions.md (v2: auth, settings, reminders, export…)
+backend/            FastAPI + SQLAlchemy (Postgres in prod, SQLite in dev)
+  app/engine/       the engine: normalize → vendors → dedupe → recurrence → status; runner.py orchestrates
+  app/parsers/      bank statement / Tally readers (Excel, CSV, PDF, XML) with column auto-detection
+  app/data/vendors.yaml   vendor dictionary — edit this to teach it new vendors, resellers, list prices
+  app/api/          routes + schemas;  app/auth.py  login/roles;  app/reminders.py  WhatsApp/email job
+  alembic/          migrations (Postgres);  tests/  107 tests;  samples/  the sample files
+frontend/           Vite + React + TypeScript: Home, Licences, Upcoming, Attention, Upload, Settings
+docs/               ARCHITECTURE.md · DEVELOPMENT.md · API.md · ROADMAP.md · research/ · history/
+CLAUDE.md           context for AI coding assistants (Claude Code reads it automatically)
+docker-compose.yml  app + Postgres
 ```
 
-## How it works (short)
+## Configuration
 
-1. **Upload** a bank statement (Excel/CSV/PDF) or a Tally purchase register (Excel/XML). Header row and columns are auto-detected. Re-uploading the same file adds nothing (rows are de-duplicated).
-2. **Engine** runs automatically:
-   - cleans every narration into a payee (`NEFT-N0001-SHREE INFOTECH-TSS` → `SHREE INFOTECH`),
-   - drops non-IT lines (salary, raw material, GST, bank charges…),
-   - recognises the vendor (alias list, reseller list, amount fingerprints like ₹5,310 = Tally TSS, narration words, learned answers),
-   - merges the same bill seen in several sources, understanding GST, TDS, forex markup, refunds, split payments,
-   - groups repeating payments into lines with cycle (monthly / quarterly / yearly / 3-yearly / prepaid), expected amount, next due and a confidence score,
-   - raises a short question only when it really can't tell (unknown vendor, seen once, stopped paying).
-3. **Screen**: "going out this month" and "monthly-equivalent" side by side, line items, next 12 months, needs-attention inbox. Every edit the accountant makes is kept across re-runs.
+Copy `.env.example` to `.env`. Everything is optional except in production:
 
-## Adding vendors / resellers
+| Variable | What it is |
+|---|---|
+| `DATABASE_URL` | Postgres URL. Unset → local SQLite file. |
+| `SECRET_KEY` | Signs login cookies. Set a long random string in production. |
+| `SEED_SAMPLE` | `1` (default) loads the sample factory on an empty database; `0` starts empty. |
+| `WA_PHONE_NUMBER_ID`, `WA_TOKEN`, `WA_TEMPLATE_NAME` | WhatsApp Cloud API (Meta) for reminders. Unset → reminders are logged as "not set up". |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Email reminders. |
+| `APP_ACCESS_KEY` | Optional extra key for scripts (`X-Access-Key` header) besides login. |
+| `SCHEDULER` | `0` disables the hourly reminder job (tests). |
 
-Edit `backend/data/vendors.yaml` — no code change. A payee the user classifies once is remembered for that company (`vendor_aliases` table); frequently confirmed strings can be promoted into the YAML.
+## Documentation
 
-## Next (not in this build)
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — data flow, models, every engine rule, status maths, auth, reminders.
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — set-up, tests, how to add a vendor / a bank format / a route, migrations, deploy checklist.
+- [docs/API.md](docs/API.md) — every endpoint with request/response shapes.
+- [docs/ROADMAP.md](docs/ROADMAP.md) — what's next (email intake, WhatsApp bill photos, GST portal, Zoho/M365 connectors).
+- [docs/research/](docs/research/) — the market, integration and engine-logic research the design is based on.
+- [docs/history/](docs/history/) — the original build plan, review reports and status notes.
 
-Unique inbound email address + forwarding guide · WhatsApp inbound ("PAID" replies) · GSTR-2B pull via a GSP · Zoho Books / Microsoft 365 connectors · invite emails.
+## Status
+
+v0.2 — a working product for pilots: login and roles, uploads, engine, dashboard, reminders, export, audit log. See [docs/history/STATUS-v0.2.md](docs/history/STATUS-v0.2.md). Licence: private, © Fwddeploy.
