@@ -19,6 +19,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://ittracker:ittracker@db:5432/ittracker
       SEED_SAMPLE: "1"
+      APP_ACCESS_KEY: ${APP_ACCESS_KEY:-}
     ports:
       - "8000:8000"
     depends_on:

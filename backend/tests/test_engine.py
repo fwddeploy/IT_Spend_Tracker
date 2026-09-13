@@ -298,3 +298,152 @@ def test_unknown_raw_material_supplier_dropped(cat):
 def test_unknown_regular_yearly_kept_as_question(cat):
     _, s = run(cat, [row(cat, "NEFT-N-SRI BALAJI ENTERPRISES-BILL", date(2025, 4, 13), 11800), row(cat, "NEFT-N-SRI BALAJI ENTERPRISES-BILL", date(2026, 4, 13), 11800)])
     assert len(s) == 1 and s[0].needs_vendor and s[0].cycle == "yearly"
+
+
+# --- normalisation: bank-specific prefixes ----------------------------------------------------
+def test_clean_payee_more_bank_formats(cat):
+    assert clean_payee("MMT/IMPS/611012345678/SHREE INFOTECH/HDFC") == "SHREE INFOTECH"          # nested mode word
+    assert clean_payee("IB BILLPAY DR-HDFCXX-BHARTI AIRTEL LTD") == "BHARTI AIRTEL"                # HDFC netbanking
+    assert clean_payee("NEFT/N094261234/HDFC/CADSPRO TECHNOLOGIES PVT LTD") == "CADSPRO TECHNOLOGIES"  # bank code segment
+    assert clean_payee("TO TRANSFER-INB IMPS/P2A/610512345678/ABC COMPUTERS/HDFC--") == "ABC COMPUTERS"  # SBI
+    assert clean_payee("BY TRANSFER-NEFT*HDFC0000001*N093261234567*CUSTOMER LTD--") == "CUSTOMER"       # SBI, * separators
+    assert clean_payee("ME DC SI 412345XXXXXX1234 GOOGLE *WORKSPACE") == "GOOGLE *WORKSPACE"      # HDFC debit-card SI
+    assert clean_payee("PCD/4123XXXXXXXX5678/ADOBE SYSTEMS SOFTWARE IRELAND/DUBLIN") == "ADOBE SYSTEMS SOFTWARE"  # Kotak
+    assert clean_payee("CHQ PAID-MICR CTS-ABC COMPUTERS-000412") == "ABC COMPUTERS"
+    assert clean_payee("POS 4XXXXXXXXXXX1234 ZOOM.US 888-799-9666") == "ZOOM.US"                   # ".US" is not a country suffix
+    assert clean_payee("INTL POS AMAZON WEB SERVICES USD 54.99") == "AMAZON WEB SERVICES"          # fx tail dropped
+    assert clean_payee("UPI/9876543210@ybl/ABC COMPUTERS/pay") == "ABC COMPUTERS"                  # phone-number VPA ignored
+    assert clean_payee("TO TRANSFER-UPI/DR/109876543210/SHREE INF/HDFC/shreeinfotech@okhdfcbank/TSS--") == "SHREEINFOTECH"
+    assert detect_mode("IB BILLPAY DR-HDFCXX-BHARTI AIRTEL LTD") == "netbanking"
+    assert detect_mode("ME DC SI 412345XXXXXX1234 GOOGLE *WORKSPACE") == "si"
+    assert detect_mode("PCD/4123XXXXXXXX5678/ADOBE") == "card"
+    assert detect_mode("ACH/MICROSOFT REGIONAL SALES/E0100ABCD") == "nach"
+
+
+def test_vendor_aliases_do_not_over_match(cat):
+    for payee, wrong in (("AZURE TEXTILES", "azure"), ("GCP ENGINEERING WORKS", "google_cloud"), ("SARALA DEVI", "tds_software"),
+                         ("COMPUTAXI SERVICES", "tds_software"), ("KEKASHI SWEETS", "keka"), ("SLACKLINE FITNESS", "slack"),
+                         ("NORTON MOTORS", "norton"), ("SAP SERVICES", "sap_b1"), ("AWSHINI TRADERS", "aws"), ("JIOMART", "jio")):
+        r = cat.resolve(payee, 5000, payee)
+        assert r.vendor_key != wrong, (payee, r.vendor_key, r.method)
+    assert not cat.resolve("GOOGLE *YOUTUBEPREMIUM").excluded          # 'EMI' must not hit YOUTUBEPREMIUM
+    assert not cat.resolve("PREMIUM STEEL RENTALS").excluded            # 'RENT'
+    assert cat.resolve(clean_payee("NWD-412345XXXXXX1234-HDFC BANK ATM-MUMBAI")).excluded  # ATM withdrawal
+    assert cat.resolve("MSFT*AZURE").vendor_key == "azure"              # not swallowed by the M365 'MSFT*' alias
+    assert cat.resolve("MICROSOFT AZURE").vendor_key == "azure"
+    assert cat.resolve("MSFT * E0100ABCD").vendor_key == "microsoft365"
+    assert cat.resolve("ESET").vendor_key == "eset"                     # 'ESET ' with trailing space never matched
+    assert cat.resolve("APPLE.COM BILL").vendor_key == "apple"
+    assert cat.resolve("ZOHO").vendor_key == "zoho"
+
+
+# --- engine edge cases ----------------------------------------------------------------------
+def test_two_seats_billed_separately_same_day(cat):
+    rows = []
+    for i in range(4):
+        d = date(2026, 1, 5) + relativedelta(months=i)
+        rows += [row(cat, "POS ZOOM.US", d, 1769), row(cat, "POS ZOOM.US", d, 1769)]
+    occs, s = run(cat, rows)
+    assert len(occs) == 8, "two identical debits with no reversal are two charges, not a duplicate"
+    st = one(s, "zoom")
+    assert st.cycle == "monthly" and st.expected_amount == 3538 and "2_charges_per_cycle" in st.flags
+
+
+def test_case47_duplicate_debit_plus_reversal_keeps_one(cat):
+    rows = [row(cat, "POS ZOOM.US", date(2026, 6, 5), 1769), row(cat, "POS ZOOM.US", date(2026, 6, 5), 1769),
+            row(cat, "ZOOM.US REVERSAL", date(2026, 6, 7), 1769, direction="credit")]
+    occs, _ = run(cat, rows)
+    assert len(occs) == 1
+
+
+def test_double_charge_then_refund_cancels_nearest(cat):
+    rows = monthly(cat, "POS ZOOM.US", 1769, date(2026, 1, 5), 5)
+    rows += [row(cat, "POS ZOOM.US", date(2026, 3, 7), 1769), row(cat, "ZOOM.US REFUND", date(2026, 3, 12), 1769, direction="credit")]
+    occs, s = run(cat, rows)
+    assert [o.date for o in occs] == [date(2026, 1, 5) + relativedelta(months=i) for i in range(5)]
+    assert one(s, "zoom").expected_amount == 1769
+
+
+def test_month_end_anchor_clamps_to_month_length(cat):
+    rows = [row(cat, "POS ADOBE", d, 1675) for d in (date(2026, 1, 31), date(2026, 2, 28), date(2026, 3, 31), date(2026, 4, 30), date(2026, 5, 31))]
+    _, s = run(cat, rows)
+    assert one(s, "adobe").next_due == date(2026, 6, 30)
+    rows = [row(cat, "POS ADOBE", d, 1675) for d in (date(2026, 5, 31), date(2026, 6, 30), date(2026, 7, 31))]
+    _, s = run(cat, rows)
+    assert one(s, "adobe").next_due == date(2026, 8, 31)
+
+
+def test_leap_year_yearly(cat):
+    rows = [row(cat, "NEFT-N-TALLY SOLUTIONS-TSS", d, 5310) for d in (date(2024, 2, 29), date(2025, 2, 28), date(2026, 2, 28))]
+    _, s = run(cat, rows)
+    st = one(s, "tally")
+    assert st.cycle == "yearly" and st.next_due == date(2027, 2, 28)
+
+
+def test_case14b_usd_fx_amount_groups_and_no_price_flag(cat):
+    rows = [row(cat, "INTL POS NOTION LABS INC USD 96.00", date(2025, 1, 10) + relativedelta(months=i), inr, fx_amount=96.0)
+            for i, inr in enumerate((7900, 8300, 9100, 8100, 8900, 9400))]
+    _, s = run(cat, rows)
+    st = one(s, "notion")
+    assert st.cycle == "monthly" and len(st.occurrences) == 6 and "price_changed" not in st.flags and "rcm_gst_payable" in st.flags
+
+
+def test_catch_up_at_new_price(cat):
+    rows = monthly(cat, "POS MSFT * E0100ABCD", 1450, date(2026, 1, 3), 4)
+    rows.append(row(cat, "POS MSFT * E0100ABCD", date(2026, 6, 3), 3480))   # May missed, paid with June at 1,740/seat-month
+    _, s = run(cat, rows)
+    st = one(s, "microsoft365")
+    assert "catch_up_2_cycles" in st.flags and st.expected_amount == 1740 and st.next_due == date(2026, 8, 3)
+
+
+def test_licence_only_twice_amc_when_narration_says_licence(cat):
+    rows = [row(cat, "NEFT-N1-SHREE INFOTECH-TALLY LICENCE", date(2024, 6, 2), 12000),
+            row(cat, "NEFT-N2-SHREE INFOTECH-TSS", date(2025, 6, 1), 5310), row(cat, "NEFT-N3-SHREE INFOTECH-TSS", date(2026, 6, 3), 5310)]
+    _, s = run(cat, rows)
+    types = sorted((x.stream_type, x.expected_amount) for x in s if x.vendor_key == "tally")
+    assert types == [("one_time", 12000.0), ("subscription", 5310.0)]
+
+
+def test_empty_and_credit_only_inputs(cat):
+    assert run(cat, []) == ([], [])
+    assert run(cat, [row(cat, "NEFT CR CUSTOMER", date(2026, 1, 1), 5000, direction="credit")]) == ([], [])
+
+
+def test_engine_5000_rows_under_5s(cat):
+    import time
+    descs = ["POS MSFT * E0100ABCD", "POS ZOOM.US", "VIN/AMAZON INTERNET SERVICES/ECOM", "NEFT-N-SHREE INFOTECH-TSS", "POS ADOBE",
+             "NEFT-N-JINDAL STEEL-RM", "NEFT-N-ABC COMPUTERS-AMC", "ACH D- BHARTI AIRTEL"] + [f"NEFT-N-SUPPLIER {k} TRADERS-BILL" for k in range(40)]
+    rows = [row(cat, descs[i % len(descs)], date(2024, 1, 1) + timedelta(days=(i * 7) % 900), 1000 + (i % 37) * 250) for i in range(5000)]
+    t = time.time()
+    occs, s = run(cat, rows)
+    assert len(occs) == 5000 and time.time() - t < 5
+
+
+# --- status / due-date maths ------------------------------------------------------------------
+def test_due_dates_in_range_edges():
+    from app.engine.status import due_dates_in_range
+    # next_due many cycles in the past: only dates inside the range, none before it
+    assert due_dates_in_range(date(1900, 1, 31), 1, date(2026, 9, 1), date(2026, 10, 31)) == [date(2026, 9, 30), date(2026, 10, 31)]
+    assert due_dates_in_range(date(1870, 1, 1), 12, date(2026, 9, 1), date(2027, 8, 31)) == [date(2027, 1, 1)]
+    # 31st anchor keeps returning to the 31st (not stuck on the 28th after February)
+    assert due_dates_in_range(date(2026, 1, 31), 1, date(2026, 1, 1), date(2026, 4, 30)) == [date(2026, 1, 31), date(2026, 2, 28), date(2026, 3, 31), date(2026, 4, 30)]
+    assert due_dates_in_range(date(2026, 9, 1), None, date(2026, 9, 1), date(2027, 8, 31)) == []
+    assert due_dates_in_range(date(2026, 9, 1), 0, date(2026, 9, 1), date(2027, 8, 31)) == []
+    assert len(due_dates_in_range(date(2026, 9, 1), 1.5, date(2026, 9, 1), date(2027, 2, 28))) == 5
+    assert due_dates_in_range(date(2027, 1, 1), 12, date(2026, 9, 1), date(2026, 12, 31)) == []
+
+
+def test_status_without_cycle_months_can_still_go_overdue():
+    kw = dict(stream_type="subscription", auto_renew=False, confidence=90, is_user_modified=False, dismissed=False, cancelled=False)
+    assert compute_status(cycle="custom", cycle_months=None, next_due=date(2026, 6, 1), last_paid_date=None, today=TODAY, **kw) == "overdue"
+    assert compute_status(cycle="yearly", cycle_months=12, next_due=TODAY, last_paid_date=None, today=TODAY, **kw) == "due_soon"
+    assert compute_status(cycle="monthly", cycle_months=1, next_due=date(2026, 3, 3), last_paid_date=None, today=TODAY, **kw) == "stopped"
+
+
+def test_booked_not_paid_uses_engine_today(cat):
+    """build_occurrences must judge 'recent' against the engine's today, not the wall clock."""
+    bill = row(cat, "Amazon Internet Services | AWS Aug bill", TODAY - timedelta(days=20), 9440, source="tally", invoice_no="AWS-AUG")
+    occs = build_occurrences([bill], cat, today=TODAY)
+    assert occs[0].unpaid and "booked_not_paid" in occs[0].flags
+    occs = build_occurrences([bill], cat, today=TODAY + timedelta(days=365))
+    assert not occs[0].unpaid and "no_bank_match" in occs[0].flags

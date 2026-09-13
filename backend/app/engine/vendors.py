@@ -55,7 +55,7 @@ class Resolution:
 _TERM_RX = [
     (re.compile(r"(\d+)\s*(?:YEARS?|YRS?)\b", re.I), lambda m: int(m.group(1)) * 12),
     (re.compile(r"(\d+)\s*(?:MONTHS?|MON)\b", re.I), lambda m: int(m.group(1))),
-    (re.compile(r"\b(?:ANNUAL|YEARLY|PER YEAR|P\.?A\.?|FY\s*\d{2})", re.I), lambda m: 12),
+    (re.compile(r"\b(?:ANNUAL|YEARLY|PER YEAR|PER ANNUM|P\.A\.|FY\s*\d{2})(?![A-Z])", re.I), lambda m: 12),
     (re.compile(r"\bHALF[- ]?YEARLY\b", re.I), lambda m: 6),
     (re.compile(r"\bQUARTERLY\b|\bQTR\b|\bQ[1-4]\b", re.I), lambda m: 3),
     (re.compile(r"\bMONTHLY\b", re.I), lambda m: 1),
@@ -215,7 +215,11 @@ class Catalog:
         if toks:
             probe = " ".join(toks)
             for key, info in self.vendors.items():
-                names = [re.sub(r"[\\*^$?()|\[\]]", " ", a).upper() for a in info.aliases if len(a) >= 5]
+                # anchored aliases (^AZURE$) are deliberately exact; one-word aliases are already regex-matched and
+                # token_set_ratio would score 100 for any payee that merely contains the word (AZURE TEXTILES).
+                names = [re.sub(r"[\\*^$?()|\[\]]", " ", a).upper() for a in info.aliases
+                         if len(a) >= 5 and "^" not in a and "$" not in a]
+                names = [n for n in names if len(n.split()) >= 2]
                 for n in names:
                     sc = fuzz.token_set_ratio(probe, n) / 100.0
                     if sc > best_score:

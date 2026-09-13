@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { listStreams, STATUSES, type StreamOut } from '../lib/api'
 import { useCompany } from '../lib/company'
@@ -8,6 +8,9 @@ import { CYCLE_LABEL, STATUS_LABEL, fmtDate, rupees, humanize } from '../lib/for
 import { Empty, ErrorMsg, Loading, NoCompany, Sources, StatusPill } from '../components/ui'
 import StreamDrawer from '../components/StreamDrawer'
 import AddStreamForm from '../components/AddStreamForm'
+
+// Lines that no longer recur: a "next due" date is stale and misleading.
+const ENDED = new Set(['cancelled', 'stopped', 'dismissed', 'one_time'])
 
 export default function Lines() {
   const { companyId } = useCompany()
@@ -61,6 +64,16 @@ export default function Lines() {
       { replace: true },
     )
   }, [setParams])
+
+  // Switching company while a line is open would leave a dead "not found"
+  // drawer (the id belongs to the other company) — close it instead.
+  const prevCompany = useRef(companyId)
+  useEffect(() => {
+    if (prevCompany.current !== companyId) {
+      prevCompany.current = companyId
+      if (openId) closeDrawer()
+    }
+  }, [companyId, openId, closeDrawer])
 
   const onChanged = useCallback(
     (updated: StreamOut) => {
@@ -153,7 +166,7 @@ export default function Lines() {
           </Empty>
         </div>
       ) : (
-        <div className="table-wrap">
+        <div className="table-wrap cards">
           <table>
             <thead>
               <tr>
@@ -180,23 +193,25 @@ export default function Lines() {
                     if (e.key === 'Enter') setParam('open', String(s.id))
                   }}
                 >
-                  <td>
+                  <td className="cell-primary" data-label="Vendor">
                     <strong>{s.vendor_name}</strong>
                     {s.payee_name && s.payee_name !== s.vendor_name ? (
                       <div className="cell-sub">{s.payee_name}</div>
                     ) : null}
                   </td>
-                  <td>{s.product ?? <span className="muted">—</span>}</td>
-                  <td>{s.category ? humanize(s.category) : <span className="muted">—</span>}</td>
-                  <td>{CYCLE_LABEL[s.cycle] ?? s.cycle}</td>
-                  <td className="right num">{rupees(s.expected_amount ?? s.avg_amount)}</td>
-                  <td className="right num">{rupees(s.monthly_equivalent)}</td>
-                  <td>{fmtDate(s.next_due)}</td>
-                  <td>
+                  <td data-label="Product">{s.product ?? <span className="muted">—</span>}</td>
+                  <td data-label="Category">{s.category ? humanize(s.category) : <span className="muted">—</span>}</td>
+                  <td data-label="Cycle">{CYCLE_LABEL[s.cycle] ?? s.cycle}</td>
+                  <td className="right num" data-label="Amount">{rupees(s.expected_amount ?? s.avg_amount)}</td>
+                  <td className="right num cell-minor" data-label="Monthly-eq.">{rupees(s.monthly_equivalent)}</td>
+                  <td data-label="Next due">
+                    {ENDED.has(s.status) ? <span className="muted">—</span> : fmtDate(s.next_due)}
+                  </td>
+                  <td data-label="Status">
                     <StatusPill status={s.status} />
                   </td>
-                  <td>{s.paid_from ?? <span className="muted">—</span>}</td>
-                  <td>
+                  <td className="cell-minor" data-label="Paid from">{s.paid_from ?? <span className="muted">—</span>}</td>
+                  <td className="cell-minor" data-label="Sources">
                     <Sources sources={s.sources} />
                   </td>
                 </tr>

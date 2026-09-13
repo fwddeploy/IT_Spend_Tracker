@@ -2,25 +2,13 @@ import { useState } from 'react'
 import { createStream, CYCLES, type Cycle, type StreamCreate, type StreamOut } from '../lib/api'
 import { errorText } from '../lib/useFetch'
 import { notifyDataChanged } from '../lib/events'
-import { CYCLE_LABEL } from '../lib/format'
+import { CATEGORY_LABELS, CYCLE_LABEL, humanize } from '../lib/format'
 import { ErrorMsg } from './ui'
 
-const SUGGESTED_CATEGORIES = [
-  'accounting',
-  'erp',
-  'email',
-  'office',
-  'design',
-  'security',
-  'cloud',
-  'domain_hosting',
-  'communication',
-  'hr_payroll',
-  'compliance',
-  'amc',
-  'hardware',
-  'other',
-]
+// Same keys the engine uses (see CATEGORY_LABELS in lib/format) so a manual
+// line groups with imported ones on the dashboard instead of forming a
+// look-alike category such as "hr_payroll" next to "hr".
+const SUGGESTED_CATEGORIES = Object.keys(CATEGORY_LABELS)
 
 interface Props {
   companyId: number
@@ -47,7 +35,9 @@ export default function AddStreamForm({ companyId, categories, onCreated, onCanc
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
-  const cats = Array.from(new Set([...categories, ...SUGGESTED_CATEGORIES])).sort()
+  const cats = Array.from(new Set([...SUGGESTED_CATEGORIES, ...categories])).sort((a, b) =>
+    humanize(a).localeCompare(humanize(b)),
+  )
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -120,7 +110,7 @@ export default function AddStreamForm({ companyId, categories, onCreated, onCanc
             <option value="">Select…</option>
             {cats.map((c) => (
               <option key={c} value={c}>
-                {c.replace(/_/g, ' ')}
+                {humanize(c)}
               </option>
             ))}
           </select>

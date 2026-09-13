@@ -129,6 +129,33 @@ h3 {
   gap: 8px;
 }
 
+@media (max-width: 640px) {
+  /* Phone: brand + company picker on one row, nav on its own row below. */
+  .topbar-inner {
+    gap: 8px 12px;
+    padding-block: 8px;
+  }
+  .topbar-right {
+    order: 1;
+  }
+  .topbar-right select {
+    max-width: 55vw !important;
+  }
+  .nav {
+    order: 2;
+    flex-basis: 100%;
+    margin: 0 -4px;
+  }
+  .nav a {
+    padding: 8px 10px;
+  }
+  /* Comfortable tap targets */
+  .btn-sm,
+  .close-btn {
+    min-height: 32px;
+  }
+}
+
 .page {
   max-width: 1120px;
   margin: 0 auto;
@@ -156,7 +183,9 @@ h3 {
   box-shadow: var(--shadow);
   padding: 16px;
 }
-.card + .card {
+/* Stacked cards get spacing from .stack; a sibling rule here leaked into
+   grids and pushed the second card in .grid-2 down by 16px. */
+.stack > .card + .card {
   margin-top: 16px;
 }
 .card-title {
@@ -298,6 +327,78 @@ th.right {
 .cell-sub {
   font-size: 12px;
   color: var(--text-3);
+}
+
+/* On phones, wide tables (Lines, Upcoming) collapse into one card per row so
+   amount / next due / status are visible without sideways scrolling. Each
+   <td> carries a data-label with its column name. */
+@media (max-width: 640px) {
+  .table-wrap.cards {
+    border: none;
+    background: transparent;
+    overflow: visible;
+  }
+  .table-wrap.cards table {
+    min-width: 0;
+    border-collapse: separate;
+    border-spacing: 0 10px;
+    margin-top: -10px;
+  }
+  .table-wrap.cards thead {
+    display: none;
+  }
+  .table-wrap.cards tbody tr {
+    display: block;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 10px 12px;
+  }
+  .table-wrap.cards tbody tr.clickable:hover {
+    background: var(--surface);
+    border-color: var(--accent);
+  }
+  .table-wrap.cards td {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    padding: 3px 0;
+    border-bottom: none;
+    white-space: normal;
+    text-align: right;
+    font-size: 14px;
+    min-height: 24px;
+  }
+  .table-wrap.cards td::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    font-size: 12px;
+    color: var(--text-3);
+    text-align: left;
+  }
+  .table-wrap.cards td:empty,
+  .table-wrap.cards td[data-label='']::before {
+    display: none;
+  }
+  .table-wrap.cards td.cell-minor {
+    display: none; /* secondary detail — still in the drawer */
+  }
+  .table-wrap.cards td.cell-primary {
+    display: block;
+    text-align: left;
+    font-size: 15px;
+    padding-bottom: 6px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  .table-wrap.cards td.cell-primary::before {
+    display: none;
+  }
+  .table-wrap.cards td.cell-primary strong {
+    font-size: 15px;
+  }
 }
 
 /* ---- pills / badges ----------------------------------------------------- */
@@ -588,6 +689,7 @@ input[type='file'] {
   overflow: hidden;
 }
 .bar-fill {
+  display: block; /* spans are inline by default: width/height were ignored, bars rendered empty */
   height: 100%;
   background: var(--accent);
   border-radius: 3px;

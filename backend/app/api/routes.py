@@ -10,12 +10,25 @@ from app.db import get_db
 from app import models as m
 from app.api import schemas as S
 from app.engine import runner
+from app.engine.runner import today_ist
 from app.engine.status import compute_status, due_dates_in_range, monthly_equivalent
 from app.engine.recurrence import CYCLE_MONTHS
 from app.parsers.tabular import parse_rows
 from app.parsers.tally_xml import parse_tally_xml
 
-router = APIRouter(prefix="/api")
+import os
+from fastapi import Request
+
+
+def require_access_key(request: Request):
+    """Pilot-grade gate: if APP_ACCESS_KEY is set, every API call must send it as X-Access-Key.
+    (Real users/roles come later; this keeps a public demo box from being open to the world.)"""
+    expected = os.environ.get("APP_ACCESS_KEY", "")
+    if expected and request.headers.get("X-Access-Key", "") != expected:
+        raise HTTPException(401, "Access key required")
+
+
+router = APIRouter(prefix="/api", dependencies=[Depends(require_access_key)])
 
 
 # ---------- helpers ----------
@@ -89,6 +102,16 @@ async def upload(company_id: int, file: UploadFile = File(...), source_kind: str
     if source_kind not in ("bank", "card", "tally", "generic"):
         raise HTTPException(400, "source_kind must be bank, card, tally or generic")
     content = await file.read()
+    if len(content) > 25 * 1024 * 1024:
+        raise HTTPException(400, "File is larger than 25 MB. Export a shorter date range (12–24 months is enough).")
+    head = content[:8]
+    fname = (file.filename or "").lower()
+    if fname.endswith((".xlsx", ".xlsm")) and not head.startswith(b"PK"):
+        raise HTTPException(400, "This is not a real Excel file. Download the statement again as .xlsx from net banking.")
+    if fname.endswith(".pdf") and not head.startswith(b"%PDF"):
+        raise HTTPException(400, "This is not a real PDF file.")
+    if not fname.endswith((".xlsx", ".xlsm", ".xls", ".csv", ".txt", ".tsv", ".pdf", ".xml")):
+        raise HTTPException(400, "Upload an Excel (.xlsx/.xls), CSV, PDF or Tally XML file.")
     label = account_label.strip() or {"bank": "Bank account", "card": "Company card", "tally": "Tally export", "generic": "Other"}[source_kind]
     kind = "personal" if is_personal else ("tally" if source_kind == "tally" else ("card" if source_kind == "card" else "bank"))
     acc = db.execute(select(m.Account).where(m.Account.company_id == company_id, m.Account.label == label)).scalar_one_or_none()
@@ -109,7 +132,9 @@ async def upload(company_id: int, file: UploadFile = File(...), source_kind: str
         db.commit()
         raise HTTPException(400, str(e))
     except Exception as e:  # noqa: BLE001
-        batch.error = f"Could not read this file: {e}"
+        import logging
+        logging.getLogger("ittracker").exception("upload parse failed")
+        batch.error = "Could not read this file. Export the statement as Excel from net banking and try again."
         db.commit()
         raise HTTPException(400, batch.error)
     added, dup = runner.ingest_rows(db, company, acc, batch, rows, source_kind, is_personal)
@@ -145,7 +170,7 @@ def imports(company_id: int, db: Session = Depends(get_db)):
 @router.get("/companies/{company_id}/dashboard")
 def dashboard(company_id: int, month: str | None = None, db: Session = Depends(get_db)):
     _company(db, company_id)
-    today = date.today()
+    today = today_ist()
     try:
         y, mo = (int(x) for x in (month or today.strftime("%Y-%m")).split("-"))
     except ValueError:
@@ -174,18 +199,27 @@ def dashboard(company_id: int, month: str | None = None, db: Session = Depends(g
         else:
             cash_out += (s.expected_amount or 0) * len(due_dates_in_range(s.next_due, s.cycle_months, start, end))
     # already-paid occurrences in this month for streams whose next_due already rolled past (avoid double count):
-    paid_this_month = db.execute(select(func.coalesce(func.sum(m.Occurrence.amount_paid), 0.0)).where(
+    live_ids = [s.id for s in live]
+    paid_rows = db.execute(select(m.Occurrence.stream_id, func.sum(m.Occurrence.amount_paid)).where(
         m.Occurrence.company_id == company_id, m.Occurrence.date >= start, m.Occurrence.date <= end,
-        m.Occurrence.unpaid == False)).scalar()  # noqa: E712
+        m.Occurrence.unpaid == False, m.Occurrence.stream_id.in_(live_ids)).group_by(m.Occurrence.stream_id)).all() if live_ids else []  # noqa: E712
+    paid_by_stream = {sid: float(v or 0) for sid, v in paid_rows}
+    paid_this_month = sum(paid_by_stream.values())
+    cash_breakdown = {"paid": 0.0, "still_due": 0.0, "estimate": 0.0}
     if start <= today <= end:
-        # this month: what was paid + what is still due after today
+        # this month = what was already paid + what is still due (incl. overdue items, due "now") + run-rate for pay-as-you-go
         remaining = 0.0
         for s in live:
             if s.stream_type == "prepaid" or not s.cycle_months:
                 continue
+            if s.status in ("overdue", "charge_missed") and s.next_due and s.next_due < today and s.id not in paid_by_stream:
+                remaining += s.expected_amount or 0
+                continue
             remaining += (s.expected_amount or 0) * len(due_dates_in_range(s.next_due, s.cycle_months, max(start, today), end))
-        cash_out = float(paid_this_month) + remaining + sum(monthly_equivalent(s.expected_amount, s.cycle_months, s.stream_type)
-                                                           for s in live if s.stream_type == "prepaid")
+        estimate = sum(max(0.0, monthly_equivalent(s.expected_amount, s.cycle_months, s.stream_type) - paid_by_stream.get(s.id, 0.0))
+                       for s in live if s.stream_type == "prepaid" or not s.cycle_months)
+        cash_out = paid_this_month + remaining + estimate
+        cash_breakdown = {"paid": round(paid_this_month, 2), "still_due": round(remaining, 2), "estimate": round(estimate, 2)}
 
     calendar = []
     for i in range(12):
@@ -199,6 +233,8 @@ def dashboard(company_id: int, month: str | None = None, db: Session = Depends(g
             for d in due_dates_in_range(s.next_due, s.cycle_months, ms, me_):
                 items.append({"stream_id": s.id, "vendor_name": s.vendor_name, "product": s.product, "amount": s.expected_amount, "due": d.isoformat()})
                 tot += s.expected_amount or 0
+        if i == 0 and start <= today <= end:
+            tot = cash_out   # current month: same number as the headline (paid so far + still due + estimate)
         calendar.append({"month": ms.strftime("%Y-%m"), "cash_out": round(tot, 2), "items": sorted(items, key=lambda x: x["due"])})
 
     next_dues = sorted([s for s in live if s.next_due], key=lambda s: s.next_due)[:5]
@@ -206,15 +242,15 @@ def dashboard(company_id: int, month: str | None = None, db: Session = Depends(g
     health = []
     for a in accs:
         last_date = db.execute(select(func.max(m.RawRow.date)).where(m.RawRow.account_id == a.id)).scalar()
-        last_imp = db.execute(select(func.max(m.ImportBatch.created_at)).where(m.ImportBatch.account_id == a.id)).scalar()
+        last_imp = db.execute(select(func.max(m.ImportBatch.created_at)).where(m.ImportBatch.account_id == a.id, m.ImportBatch.error == None)).scalar()  # noqa: E711
         health.append({"account_label": a.label, "source_kind": a.kind, "last_data_date": last_date.isoformat() if last_date else None,
                        "last_import_at": last_imp.isoformat() if last_imp else None,
                        "stale": bool(last_date and (today - last_date).days > 45)})
     return {
-        "month": start.strftime("%Y-%m"), "cash_out_month": round(cash_out, 2), "monthly_equivalent": round(meq, 2),
+        "month": start.strftime("%Y-%m"), "cash_out_month": round(cash_out, 2), "cash_breakdown": cash_breakdown, "monthly_equivalent": round(meq, 2),
         "annualised": round(meq * 12, 2),
         "active_count": sum(1 for s in streams if s.status in LIVE),
-        "due_soon_count": sum(1 for s in streams if s.status == "due_soon"),
+        "due_soon_count": sum(1 for s in streams if s.status in LIVE and s.next_due and 0 <= (s.next_due - today).days <= 7),
         "overdue_count": sum(1 for s in streams if s.status in ("overdue", "charge_missed")),
         "needs_confirm_count": db.execute(select(func.count(m.Question.id)).where(m.Question.company_id == company_id, m.Question.answered == False)).scalar(),  # noqa: E712
         "by_category": sorted([{**v, "monthly_equivalent": round(v["monthly_equivalent"], 2)} for v in by_cat.values()], key=lambda x: -x["monthly_equivalent"]),
@@ -302,9 +338,12 @@ def patch_stream(company_id: int, sid: int, body: S.StreamPatch, db: Session = D
                 raise HTTPException(400, "status can be set to active, cancelled, stopped or one_time")
         setattr(st, k, v)
         uf[k] = v.isoformat() if isinstance(v, date) else v
+    if "next_due" in data:
+        uf["next_due_basis"] = st.last_paid_date.isoformat() if st.last_paid_date else ""
     st.user_fields = uf
     st.is_user_modified = True
-    st.confidence = 100
+    if any(k in data for k in ("cycle", "expected_amount", "vendor_name", "product", "status", "next_due")):
+        st.confidence = 100
     _recompute_status(st)
     if data.get("status") in ("active", "stopped", "one_time"):
         st.status = data["status"]
@@ -329,9 +368,12 @@ def mark_paid(company_id: int, sid: int, body: S.MarkPaid, db: Session = Depends
     if st.cycle_months:
         st.next_due = body.date + relativedelta(months=int(st.cycle_months))
     uf = dict(st.user_fields or {})
-    uf["next_due"] = st.next_due.isoformat() if st.next_due else None
-    uf["last_paid_date"] = body.date.isoformat()
-    st.user_fields, st.is_user_modified = uf, True
+    # marking paid confirms the line as it stands: keep its cycle and amount even if the manual date breaks the rhythm
+    uf.update(cycle=st.cycle, cycle_months=st.cycle_months, stream_type=st.stream_type, expected_amount=st.expected_amount)
+    if st.paid_from:
+        uf["paid_from"] = st.paid_from
+    uf.pop("next_due", None); uf.pop("next_due_basis", None)
+    st.user_fields, st.is_user_modified, st.confidence = uf, True, 100
     st.occurrences_count = (st.occurrences_count or 0) + 1
     if "manual" not in (st.sources or []):
         st.sources = list(st.sources or []) + ["manual"]
@@ -398,7 +440,7 @@ def answer(company_id: int, qid: int, body: S.AnswerIn, db: Session = Depends(ge
 @router.get("/companies/{company_id}/upcoming")
 def upcoming(company_id: int, days: int = 90, db: Session = Depends(get_db)):
     _company(db, company_id)
-    today = date.today()
+    today = today_ist()
     end = today + timedelta(days=days)
     streams = db.execute(select(m.Stream).where(m.Stream.company_id == company_id, m.Stream.dismissed == False)).scalars().all()  # noqa: E712
     months: dict[str, dict] = {}
@@ -431,5 +473,6 @@ def vendors(q: str | None = None, db: Session = Depends(get_db)):
 
 
 @router.get("/health")
-def health():
+def health(db: Session = Depends(get_db)):
+    db.execute(select(func.count(m.Vendor.id)))
     return {"ok": True, "time": datetime.utcnow().isoformat()}

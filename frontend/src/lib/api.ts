@@ -287,12 +287,30 @@ export class ApiError extends Error {
 
 const BASE = '/api'
 
+export function getAccessKey(): string {
+  try { return localStorage.getItem('it-tracker.accessKey') ?? '' } catch { return '' }
+}
+export function setAccessKey(k: string) {
+  try { localStorage.setItem('it-tracker.accessKey', k) } catch { /* ignore */ }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response
   try {
-    res = await fetch(BASE + path, init)
+    const headers = new Headers(init?.headers ?? {})
+    const key = getAccessKey()
+    if (key) headers.set('X-Access-Key', key)
+    res = await fetch(BASE + path, { ...init, headers })
   } catch {
     throw new ApiError(0, 'Could not reach the server. Is the backend running on port 8000?')
+  }
+  if (res.status === 401) {
+    const entered = window.prompt('This IT Tracker needs an access key. Enter it to continue:')
+    if (entered) {
+      setAccessKey(entered.trim())
+      return request<T>(path, init)
+    }
+    throw new ApiError(401, 'Access key required.')
   }
   if (!res.ok) {
     let msg = `Request failed (${res.status})`

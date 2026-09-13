@@ -170,7 +170,7 @@ export default function Home() {
             </div>
             <div className="cal-legend">
               Amber bars are well above the 12-month average — typically financial-year-end
-              renewals in March/April. Hover a bar for the items.
+              renewals in March/April. Hover or tap a bar to see the items.
             </div>
           </>
         )}

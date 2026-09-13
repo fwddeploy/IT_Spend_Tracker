@@ -78,7 +78,7 @@ export default function Upcoming() {
                 <strong className="num">{rupees(m.total)}</strong>
               </div>
             </div>
-            <div className="table-wrap">
+            <div className="table-wrap cards">
               <table>
                 <thead>
                   <tr>
@@ -97,7 +97,7 @@ export default function Upcoming() {
                     const dl = daysUntil(it.due)
                     return (
                       <tr key={`${it.id}-${it.due}`}>
-                        <td>
+                        <td data-label="Due">
                           {fmtDate(it.due)}
                           {dl !== null && (
                             <div className="cell-sub">
@@ -105,19 +105,19 @@ export default function Upcoming() {
                             </div>
                           )}
                         </td>
-                        <td>
+                        <td data-label="Vendor">
                           <Link to={`/lines?open=${it.id}`}>
                             <strong>{it.vendor_name}</strong>
                           </Link>
                         </td>
-                        <td>{it.product ?? <span className="muted">—</span>}</td>
-                        <td>{CYCLE_LABEL[it.cycle] ?? it.cycle}</td>
-                        <td className="right num">{rupees(it.expected_amount ?? it.avg_amount)}</td>
-                        <td>
+                        <td data-label="Product">{it.product ?? <span className="muted">—</span>}</td>
+                        <td className="cell-minor" data-label="Cycle">{CYCLE_LABEL[it.cycle] ?? it.cycle}</td>
+                        <td className="right num" data-label="Amount">{rupees(it.expected_amount ?? it.avg_amount)}</td>
+                        <td data-label="Status">
                           <StatusPill status={it.status} />
                         </td>
-                        <td>{it.paid_from ?? <span className="muted">—</span>}</td>
-                        <td>
+                        <td className="cell-minor" data-label="Paid from">{it.paid_from ?? <span className="muted">—</span>}</td>
+                        <td data-label="">
                           {it.pay_url ? (
                             <a className="btn btn-sm" href={it.pay_url} target="_blank" rel="noopener noreferrer">
                               Pay now

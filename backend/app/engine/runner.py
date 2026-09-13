@@ -3,6 +3,7 @@ User edits live in Stream.user_fields and are never overwritten by a re-run."""
 from __future__ import annotations
 import hashlib
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from dateutil.relativedelta import relativedelta
 from sqlalchemy import select, delete
 from sqlalchemy.orm import Session
@@ -13,6 +14,11 @@ from app.engine.normalize import clean_payee, detect_mode
 from app.engine.dedupe import Row, build_occurrences
 from app.engine.recurrence import build_streams, CYCLE_MONTHS
 from app.engine.status import compute_status
+
+def today_ist() -> date:
+    """The customer is in India; the server may not be."""
+    return datetime.now(ZoneInfo("Asia/Kolkata")).date()
+
 
 SOURCE_MAP = {"bank": "bank", "card": "card", "tally": "tally", "generic": "bank", "email": "email", "gst": "gst", "manual": "manual"}
 
@@ -47,8 +53,12 @@ def ingest_rows(db: Session, company: m.Company, account: m.Account | None, batc
     source = SOURCE_MAP.get(source_kind, "bank")
     existing = {k for (k,) in db.execute(select(m.RawRow.dedupe_key).where(m.RawRow.company_id == company.id)).all()}
     added, skipped = 0, 0
+    seen_in_file: dict[str, int] = {}
     for r in rows:
-        key = dedupe_key(source, r["date"], r["amount"], r["direction"], r["raw_description"])
+        base = dedupe_key(source, r["date"], r["amount"], r["direction"], r["raw_description"])
+        n = seen_in_file.get(base, 0)
+        seen_in_file[base] = n + 1
+        key = base if n == 0 else f"{base}#{n}"   # two identical lines in one file are two payments (rule 2.47)
         if key in existing:
             skipped += 1
             continue
@@ -80,7 +90,7 @@ def _load_learned(db: Session, catalog: Catalog):
 
 
 def run_engine(db: Session, company_id: int, today: date | None = None) -> dict:
-    today = today or date.today()
+    today = today or today_ist()
     catalog = get_catalog()
     _load_learned(db, catalog)
     key2id, _ = _vendor_ids(db)
@@ -114,9 +124,13 @@ def run_engine(db: Session, company_id: int, today: date | None = None) -> dict:
         if st is None:
             st = m.Stream(company_id=company_id, stream_key=sr.key)
             db.add(st)
-        uf = st.user_fields or {}
+        uf = dict(st.user_fields or {})
+        # a next_due the user typed is only valid until the next real payment arrives
+        if "next_due" in uf and uf.get("next_due_basis") and sr.last_paid_date and sr.last_paid_date.isoformat() > uf["next_due_basis"]:
+            uf.pop("next_due", None); uf.pop("next_due_basis", None)
+            st.user_fields = uf
         engine_vals = dict(
-            vendor_id=key2id.get(sr.vendor_key) if sr.vendor_key else None, vendor_name=sr.vendor_name, payee_name=sr.payee_name,
+            vendor_id=key2id.get(sr.vendor_key) if sr.vendor_key else None, vendor_name=(sr.vendor_name or "")[:120], payee_name=(sr.payee_name or "")[:200],
             product=sr.product, category=sr.category, stream_type=sr.stream_type, cycle=sr.cycle, cycle_months=sr.cycle_months,
             expected_amount=sr.expected_amount, avg_amount=sr.avg_amount, last_amount=sr.last_amount, currency=sr.currency,
             first_seen=sr.first_seen, last_paid_date=sr.last_paid_date, next_due=sr.next_due, anchor_day=sr.anchor_day,
@@ -195,7 +209,7 @@ def _make_questions(db: Session, company_id: int, results, catalog: Catalog, tod
         st = streams.get(sr.key)
         if not st or st.is_user_modified or st.dismissed:
             continue
-        dates = [o.date.isoformat() for o in sr.occurrences][-6:]
+        dates = [o.date.strftime("%-d %b %Y") for o in sr.occurrences][-6:]
         amt = sr.expected_amount or 0
         yearly_value = amt * (12 / sr.cycle_months) if sr.cycle_months else amt
         ctx = {"payee": sr.payee_name, "amount": amt, "dates": dates, "cycle_guess": sr.cycle, "sources": sr.sources}
@@ -220,8 +234,9 @@ def _make_questions(db: Session, company_id: int, results, catalog: Catalog, tod
                                context=ctx, options=CYCLE_OPTIONS, stream_id=st.id)
         # 3. stopped
         if st.status in ("stopped", "amc_lapsed"):
+            last_paid_txt = sr.last_paid_date.strftime("%-d %b %Y") if sr.last_paid_date else "a while"
             key = f"stopped|{sr.key}"
-            wanted[key] = dict(kind="stopped", prompt=f"{sr.vendor_name} — no payment since {sr.last_paid_date}. Cancelled, or forgot to pay?",
+            wanted[key] = dict(kind="stopped", prompt=f"{sr.vendor_name} — no payment since {last_paid_txt}. Cancelled, or forgot to pay?",
                                context=ctx, options=[{"key": "cancelled", "label": "Cancelled / stopped using"},
                                                      {"key": "still_active", "label": "Still using — remind me"},
                                                      {"key": "paid_elsewhere", "label": "Paid from another account (add it later)"}],
@@ -278,7 +293,7 @@ def answer_question(db: Session, q: m.Question, choice: str, text: str | None = 
             st.cycle, st.cycle_months = choice, CYCLE_MONTHS.get(choice)
             if st.last_paid_date and st.cycle_months:
                 st.next_due = st.last_paid_date + relativedelta(months=int(st.cycle_months))
-            uf.update(cycle=st.cycle, cycle_months=st.cycle_months, next_due=st.next_due.isoformat() if st.next_due else None)
+            uf.update(cycle=st.cycle, cycle_months=st.cycle_months)
         st.user_fields, st.is_user_modified, st.confidence = uf, True, 100
         st.status = compute_status(stream_type=st.stream_type, cycle=st.cycle, cycle_months=st.cycle_months, next_due=st.next_due,
                                    last_paid_date=st.last_paid_date, auto_renew=st.auto_renew, confidence=100, is_user_modified=True,
@@ -292,7 +307,7 @@ def answer_question(db: Session, q: m.Question, choice: str, text: str | None = 
             uf["status"] = "cancelled"
             st.status = "cancelled"
         elif choice == "still_active":
-            st.next_due = date.today() + relativedelta(days=7)
+            st.next_due = today_ist() + relativedelta(days=7)
             uf["next_due"] = st.next_due.isoformat()
             st.status = "due_soon"
             st.flags = list(st.flags or []) + ["user_says_active"]
@@ -312,7 +327,8 @@ def answer_question(db: Session, q: m.Question, choice: str, text: str | None = 
 def _learn(db: Session, company_id: int, payee: str | None, vendor_id: int, product: str | None):
     if not payee:
         return
-    db.add(m.VendorAlias(vendor_id=vendor_id, pattern=payee, kind="exact", product=product, company_id=company_id))
+    import re as _re
+    db.add(m.VendorAlias(vendor_id=vendor_id, pattern=f"^{_re.escape(payee)}$", kind="regex", product=product, company_id=company_id))
     db.flush()
 
 

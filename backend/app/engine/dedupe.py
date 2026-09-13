@@ -147,7 +147,8 @@ def _match_quality(bank: float, bill: Row) -> int:
     return 3
 
 
-def build_occurrences(rows: list[Row], catalog: Catalog) -> list[Occ]:
+def build_occurrences(rows: list[Row], catalog: Catalog, today: date | None = None) -> list[Occ]:
+    today = today or date.today()
     rows = sorted(rows, key=lambda r: (r.date, r.id))
     debits: list[Row] = []
     credits: list[Row] = []
@@ -155,24 +156,27 @@ def build_occurrences(rows: list[Row], catalog: Catalog) -> list[Occ]:
     for r in rows:
         if r.res.is_fee:
             fees.append(r)
+        elif r.direction == "credit":
+            # credits are only ever used as refunds/reversals of a vendor debit, so the exclusion list
+            # ("REVERSAL", "CHEQUE RETURN"...) must not hide them
+            credits.append(r)
         elif r.res.excluded:
             continue
-        elif r.direction == "credit":
-            credits.append(r)
         elif r.amount <= 5:
             continue
         else:
             debits.append(r)
 
-    # --- refunds / reversals (2.24, 2.47) ---
+    # --- refunds / reversals (2.24, 2.47): a credit cancels the nearest matching debit in the previous 30 days.
+    # Two identical same-day debits + one credit therefore leave one occurrence (a retried card charge); two
+    # identical debits with no credit stay two occurrences (two seats billed separately).
     dropped: set[int] = set()
     for c in credits:
-        for d in debits:
-            if d.id in dropped or d.source not in PAYMENT_SOURCES:
-                continue
-            if abs(d.amount - c.amount) <= max(2.0, d.amount * 0.01) and 0 <= (c.date - d.date).days <= 30 and _same_vendor(d, c):
-                dropped.add(d.id)
-                break
+        cands = [d for d in debits if d.id not in dropped and d.source in PAYMENT_SOURCES
+                 and abs(d.amount - c.amount) <= max(2.0, d.amount * 0.01) and 0 <= (c.date - d.date).days <= 30
+                 and _same_vendor(d, c)]
+        if cands:
+            dropped.add(min(cands, key=lambda d: (c.date - d.date).days).id)
     debits = [d for d in debits if d.id not in dropped]
 
     # --- build occurrences: payments first, then attach bills ---
@@ -181,12 +185,7 @@ def build_occurrences(rows: list[Row], catalog: Catalog) -> list[Occ]:
     bills = [d for d in debits if d.source in BILL_SOURCES]
 
     for p in payments:
-        # same-source exact duplicate (same day, same amount, same payee) -> keep one
-        dup = next((o for o in occs if o.date == p.date and abs(o.amount_paid - p.amount) < 0.01
-                    and p.source in o.sources and o.payee_clean == p.payee_clean), None)
-        if dup:
-            dup.raw_row_ids.append(p.id)
-            continue
+        # (re-uploads of the same statement are already de-duplicated at ingest by their dedupe_key)
         occs.append(Occ(
             date=p.date, amount_paid=p.amount, amount_gross=p.amount, payee_clean=p.payee_clean,
             vendor_key=p.res.vendor_key, product=p.res.product, resolution=p.res.method,
@@ -293,8 +292,8 @@ def build_occurrences(rows: list[Row], catalog: Catalog) -> list[Occ]:
                 vendor_key=b.res.vendor_key, product=b.res.product or _narration_product(b.raw_description), product_soft=(b.res.product is None), resolution=b.res.method,
                 sources=[b.source], raw_row_ids=[b.id], raw_description=b.raw_description,
                 currency=b.currency, taxable=b.taxable, gst=b.gst, invoice_no=b.invoice_no,
-                period_from=b.period_from, period_to=b.period_to, unpaid=(b.date >= date.today() - timedelta(days=60)),
-                account_label=b.account_label, res=b.res, flags=["booked_not_paid"] if b.date >= date.today() - timedelta(days=60) else ["no_bank_match"],
+                period_from=b.period_from, period_to=b.period_to, unpaid=(b.date >= today - timedelta(days=60)),
+                account_label=b.account_label, res=b.res, flags=["booked_not_paid"] if b.date >= today - timedelta(days=60) else ["no_bank_match"],
             ))
 
     # --- cross-source vendor rescue: unknown bank payee, but a bill row of same amount nearby already resolved ---

@@ -13,7 +13,7 @@ import {
 } from '../lib/api'
 import { useCompany } from '../lib/company'
 import { useFetch, errorText } from '../lib/useFetch'
-import { notifyDataChanged } from '../lib/events'
+import { notifyDataChanged, useDataChanged } from '../lib/events'
 import { fmtDateTime } from '../lib/format'
 import { Empty, ErrorMsg, Loading } from '../components/ui'
 
@@ -108,7 +108,9 @@ function UploadForm({
       accounts.reload()
       notifyDataChanged()
     } catch (e2) {
+      setResult(null) // don't leave the previous file's success box under the error
       setErr(errorText(e2))
+      notifyDataChanged() // the failed batch is recorded; show it in Previous imports
     } finally {
       setBusy(false)
     }
@@ -235,6 +237,7 @@ function Stat({ label, value }: { label: string; value: number }) {
 
 function ImportsList({ companyId }: { companyId: number }) {
   const imports = useFetch(() => listImports(companyId), [companyId])
+  useDataChanged(imports.reload) // refresh after each upload / engine run
   const [running, setRunning] = useState(false)
   const [runErr, setRunErr] = useState<string | null>(null)
   const [runResult, setRunResult] = useState<EngineSummary | null>(null)

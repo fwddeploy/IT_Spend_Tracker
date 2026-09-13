@@ -95,3 +95,52 @@ def test_full_flow(client, files):
     # bad file
     r = client.post(f"/api/companies/{cid}/upload", files={"file": ("x.xlsx", b"not an excel")}, data={"source_kind": "bank"})
     assert r.status_code == 400 and "detail" in r.json()
+
+
+def test_mark_paid_keeps_cycle_and_later_payment_moves_due(client, files):
+    bank, tally = files
+    cid = client.post("/api/companies", json={"name": "Mark Paid Co"}).json()["id"]
+    with open(bank, "rb") as f:
+        client.post(f"/api/companies/{cid}/upload", files={"file": (bank.name, f)}, data={"source_kind": "bank", "account_label": "HDFC"})
+    with open(tally, "rb") as f:
+        client.post(f"/api/companies/{cid}/upload", files={"file": (tally.name, f)}, data={"source_kind": "tally"})
+    sw = next(s for s in client.get(f"/api/companies/{cid}/streams").json() if s["vendor_name"].startswith("SolidWorks"))
+    before_meq = sw["monthly_equivalent"]
+    r = client.post(f"/api/companies/{cid}/streams/{sw['id']}/mark-paid", json={"date": "2026-09-13"}).json()
+    assert r["cycle"] == "yearly" and r["monthly_equivalent"] == before_meq and r["next_due"] == "2027-09-13"
+    assert r["paid_from"], "paid_from must survive a mark-paid re-run"
+    # a note edit must not silently confirm / change anything else
+    r2 = client.patch(f"/api/companies/{cid}/streams/{sw['id']}", json={"notes": "check with Cadspro"}).json()
+    assert r2["cycle"] == "yearly" and r2["notes"] == "check with Cadspro"
+    # a user-typed next_due is respected until a newer real payment arrives, then the engine takes over again
+    client.patch(f"/api/companies/{cid}/streams/{sw['id']}", json={"next_due": "2027-10-01"})
+    assert client.get(f"/api/companies/{cid}/streams/{sw['id']}").json()["next_due"] == "2027-10-01"
+    import io, pandas as pd
+    df = pd.DataFrame([{"Date": "20/03/2028", "Narration": "RTGS-CADSPRO TECHNOLOGIES PVT LTD-SW SUBSCRIPTION", "Chq/Ref No": "SW2028", "Withdrawal Amt": 46400, "Deposit Amt": None}])
+    buf = io.BytesIO(); df.to_excel(buf, index=False); buf.seek(0)
+    client.post(f"/api/companies/{cid}/upload", files={"file": ("later.xlsx", buf)}, data={"source_kind": "bank", "account_label": "HDFC"})
+    sw2 = client.get(f"/api/companies/{cid}/streams/{sw['id']}").json()
+    assert sw2["last_paid_date"] == "2028-03-20" and sw2["next_due"] == "2029-03-20"
+    d = client.get(f"/api/companies/{cid}/dashboard").json()
+    assert "cash_breakdown" in d and d["cash_out_month"] >= d["cash_breakdown"]["paid"]
+
+
+def test_same_day_identical_rows_both_imported(client):
+    import io, pandas as pd
+    cid = client.post("/api/companies", json={"name": "Dup Co"}).json()["id"]
+    rows = [{"Date": "05/06/2026", "Narration": "POS 4XXXX ZOOM.US 888-799-9666", "Withdrawal Amt": 1769, "Deposit Amt": None}] * 2
+    df = pd.DataFrame(rows)
+    buf = io.BytesIO(); df.to_excel(buf, index=False); buf.seek(0)
+    r = client.post(f"/api/companies/{cid}/upload", files={"file": ("two.xlsx", buf)}, data={"source_kind": "bank"}).json()
+    assert r["batch"]["rows_imported"] == 2
+    buf.seek(0)
+    r = client.post(f"/api/companies/{cid}/upload", files={"file": ("two.xlsx", buf)}, data={"source_kind": "bank"}).json()
+    assert r["batch"]["rows_imported"] == 0
+
+
+def test_upload_guards(client):
+    cid = client.post("/api/companies", json={"name": "Guard Co"}).json()["id"]
+    r = client.post(f"/api/companies/{cid}/upload", files={"file": ("fake.xlsx", b"hello world")}, data={"source_kind": "bank"})
+    assert r.status_code == 400 and "not a real Excel" in r.json()["detail"]
+    r = client.post(f"/api/companies/{cid}/upload", files={"file": ("x.exe", b"MZ")}, data={"source_kind": "bank"})
+    assert r.status_code == 400

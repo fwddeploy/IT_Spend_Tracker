@@ -36,6 +36,8 @@ python -m pytest -q                 # engine cases + end-to-end API flow
 DATABASE_URL=postgresql+psycopg2://ittracker:ittracker@localhost:5432/ittracker python -m pytest -q tests/test_api.py
 ```
 
+Optional: set `APP_ACCESS_KEY=somesecret` (in `.env` / compose) and the page will ask for that key once before showing any data. Set `SEED_SAMPLE=0` to start empty. See `docs/REVIEW-v0.1.md` for what was reviewed, fixed and what is still open.
+
 ## What's inside
 
 ```
@@ -54,7 +56,7 @@ backend/
       status.py        active / due soon / overdue / stopped / cancelled…; cash-out vs monthly-equivalent
       runner.py        DB orchestration; user edits are never overwritten; needs-attention questions
     sample.py          realistic sample company (also writes backend/samples/*.xlsx)
-  tests/               31 engine cases from the research + a full API flow
+  tests/               62 engine/parser cases from the research + end-to-end API flows
 frontend/              Vite + React + TS: Home, Lines, Upcoming, Attention, Upload
 docs/API.md            API contract
 ```

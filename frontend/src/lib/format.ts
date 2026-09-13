@@ -84,7 +84,7 @@ export const STATUS_LABEL: Record<StreamStatus, string> = {
   dismissed: 'Dismissed',
 }
 
-const CATEGORY_LABELS: Record<string, string> = {
+export const CATEGORY_LABELS: Record<string, string> = {
   cad: 'CAD / design tools',
   erp: 'ERP / accounts',
   office: 'Office / email',

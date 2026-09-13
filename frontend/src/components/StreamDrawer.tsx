@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   confirmStream,
   getStream,
@@ -35,6 +35,9 @@ interface EditForm {
   reminder_on: boolean
   notes: string
 }
+
+// Lines that no longer recur: the old next-due date would only mislead.
+const ENDED = new Set(['cancelled', 'stopped', 'dismissed', 'one_time'])
 
 function toForm(s: StreamOut): EditForm {
   return {
@@ -73,14 +76,54 @@ export default function StreamDrawer({ companyId, streamId, onClose, onChanged }
     }
   }, [detail.data])
 
-  // Close on Escape
+  // Keyboard: Esc closes; Tab cycles inside the dialog instead of escaping to
+  // the page behind the backdrop; focus moves in on open and back out on close.
+  const asideRef = useRef<HTMLElement>(null)
   useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null
+    const focusables = () =>
+      Array.from(
+        asideRef.current?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      ).filter((el) => el.offsetParent !== null)
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose()
+        return
+      }
+      if (e.key !== 'Tab') return
+      const els = focusables()
+      if (els.length === 0) return
+      const first = els[0]
+      const last = els[els.length - 1]
+      const active = document.activeElement as HTMLElement | null
+      const inside = !!active && !!asideRef.current?.contains(active)
+      if (!inside) {
+        e.preventDefault()
+        ;(e.shiftKey ? last : first).focus()
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault()
+        first.focus()
+      }
     }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      if (opener && document.contains(opener)) opener.focus()
+    }
   }, [onClose])
+  // Once content is in, put focus on the Close button (first control).
+  useEffect(() => {
+    if (!form) return // the loaded view (and its Close button) renders once the form exists
+    const btn = asideRef.current?.querySelector<HTMLElement>('.close-btn')
+    if (btn && !asideRef.current?.contains(document.activeElement)) btn.focus()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form !== null])
 
   const s = detail.data
 
@@ -172,7 +215,7 @@ export default function StreamDrawer({ companyId, streamId, onClose, onChanged }
   return (
     <>
       <div className="drawer-backdrop" onClick={onClose} />
-      <aside className="drawer" role="dialog" aria-modal="true" aria-label="Licence details">
+      <aside ref={asideRef} className="drawer" role="dialog" aria-modal="true" aria-label="Licence details">
         {detail.loading && !s ? (
           <Loading />
         ) : detail.error ? (
@@ -248,7 +291,7 @@ export default function StreamDrawer({ companyId, streamId, onClose, onChanged }
               <dt>Last paid</dt>
               <dd>{fmtDate(s.last_paid_date)}</dd>
               <dt>Next due</dt>
-              <dd>{fmtDate(s.next_due)}</dd>
+              <dd>{ENDED.has(s.status) ? <span className="muted">— ({humanize(s.status)})</span> : fmtDate(s.next_due)}</dd>
               <dt>Auto-renew</dt>
               <dd>{s.auto_renew === null || s.auto_renew === undefined ? '—' : s.auto_renew ? 'Yes' : 'No'}</dd>
               <dt>Confidence</dt>
@@ -264,8 +307,8 @@ export default function StreamDrawer({ companyId, streamId, onClose, onChanged }
                   <dt>Flags</dt>
                   <dd>
                     {s.flags.map((f) => (
-                      <span key={f} className="tag">
-                        {f}
+                      <span key={f} className="tag" title={f}>
+                        {humanize(f)}
                       </span>
                     ))}
                   </dd>

@@ -1,6 +1,8 @@
 """Group occurrences into streams (one dashboard line each) and work out cycle, expected amount, next due, confidence."""
 from __future__ import annotations
 import math
+import re
+from calendar import monthrange
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from statistics import median
@@ -79,20 +81,46 @@ def _cv(vals: list[float]) -> float:
     return (var ** 0.5) / m
 
 
+def _same_amount(a: Occ, b: Occ, tol: float) -> bool:
+    """Same amount band. When both sides carry the foreign-currency amount, compare that (2.31a): USD 54.99 is
+    the same charge whether the bank converted it to Rs 4,612 or Rs 4,701."""
+    if a.fx_amount and b.fx_amount:
+        return abs(a.fx_amount - b.fx_amount) <= max(0.05, a.fx_amount * 0.03)
+    ref = b.amount_gross
+    return abs(a.amount_gross - ref) <= ref * tol
+
+
 def _band_split(occs: list[Occ], tol: float) -> list[list[Occ]]:
     """Cluster by amount over time: an occurrence joins the band whose latest amount is within ±tol."""
     bands: list[list[Occ]] = []
     for o in sorted(occs, key=lambda x: x.date):
         placed = False
         for b in bands:
-            ref = b[-1].amount_gross
-            if abs(o.amount_gross - ref) <= ref * tol:
+            if _same_amount(o, b[-1], tol):
                 b.append(o)
                 placed = True
                 break
         if not placed:
             bands.append([o])
     return bands
+
+
+def _cluster_same_cycle(occs: list[Occ], within_days: int = 2) -> list[tuple[date, float, list[Occ]]]:
+    """Several charges a day or two apart are one billing event (two seats billed separately, a payment split
+    over two lines): returns (date of last charge, total amount, members) per event."""
+    out: list[tuple[date, float, list[Occ]]] = []
+    for o in sorted(occs, key=lambda x: x.date):
+        if out and (o.date - out[-1][0]).days <= within_days:
+            d, total, members = out[-1]
+            out[-1] = (o.date, round(total + o.amount_gross, 2), members + [o])
+        else:
+            out.append((o.date, o.amount_gross, [o]))
+    return out
+
+
+def _clamp_day(d: date, day: int) -> date:
+    """Same month as d, on `day` clamped to the month's length (anchor 31 -> 30 Jun, 28 Feb, 31 Jul)."""
+    return d.replace(day=min(day, monthrange(d.year, d.month)[1]))
 
 
 def _merge_step_changes(bands: list[list[Occ]]) -> list[list[Occ]]:
@@ -155,7 +183,8 @@ def build_streams(occs: list[Occ], catalog: Catalog, today: date | None = None) 
                     small = min(sum(o.amount_gross for o in b) / len(b) for b in repeating)
                     new_bands = []
                     for b in bands:
-                        if len(b) == 1 and b[0].amount_gross >= 3 * small and b[0].date <= min(o.date for r in repeating for o in r):
+                        need = 2 if _LICENCE_RX.search(b[0].raw_description or "") else 3
+                        if len(b) == 1 and b[0].amount_gross >= need * small and b[0].date <= min(o.date for r in repeating for o in r):
                             streams.append(_one_time(b[0], vinfo, currency, catalog, gk))
                         else:
                             new_bands.append(b)
@@ -163,6 +192,9 @@ def build_streams(occs: list[Occ], catalog: Catalog, today: date | None = None) 
             for b in bands:
                 streams.append(_stream_from_band(b, vinfo, currency, catalog, gk, product, variable, prepaid, today))
     return streams
+
+
+_LICENCE_RX = re.compile(r"LICEN[CS]E|PURCHASE|NEW LIC|PERPETUAL", re.I)
 
 
 def _vendor_name(vinfo, occ: Occ) -> str:
@@ -185,11 +217,17 @@ def _one_time(o: Occ, vinfo, currency, catalog, gk) -> StreamResult:
 def _stream_from_band(band: list[Occ], vinfo, currency, catalog, gk, product, variable, prepaid, today) -> StreamResult:
     band = sorted(band, key=lambda x: x.date)
     paid = [o for o in band if not o.unpaid]
-    dates = [o.date for o in paid] or [o.date for o in band]
-    amounts = [o.amount_gross for o in paid] or [o.amount_gross for o in band]
+    events = _cluster_same_cycle(paid or band)
+    dates = [e[0] for e in events]
+    amounts = [e[1] for e in events]
+    fx_amounts = [sum(o.fx_amount or 0 for o in e[2]) for e in events] if all(o.fx_amount for e in events for o in e[2]) else []
     gaps = [(dates[i] - dates[i - 1]).days for i in range(1, len(dates))]
     gaps = [g for g in gaps if g > 0]
-    flags: list[str] = []
+    if any(len(e[2]) > 1 for e in events):
+        flags_multi = [f"{max(len(e[2]) for e in events)}_charges_per_cycle"]
+    else:
+        flags_multi = []
+    flags: list[str] = list(flags_multi)
     first = band[0]
     last_paid = paid[-1] if paid else None
 
@@ -247,7 +285,8 @@ def _stream_from_band(band: list[Occ], vinfo, currency, catalog, gk, product, va
     else:
         expected = amounts[-1]
         avg = sum(amounts) / len(amounts)
-        if len(amounts) >= 2 and (max(amounts) - min(amounts)) > min(amounts) * 0.05:
+        cmp = fx_amounts or amounts   # a USD charge whose INR value moves with the rate is not a price change (2.31)
+        if len(cmp) >= 2 and (max(cmp) - min(cmp)) > min(cmp) * 0.05:
             flags.append("price_changed")
     history = [{"date": o.date.isoformat(), "amount": o.amount_gross} for o in band]
     if vinfo and vinfo.intro_pricing and len(amounts) == 1:
@@ -269,20 +308,26 @@ def _stream_from_band(band: list[Occ], vinfo, currency, catalog, gk, product, va
             next_due = last_paid.date + relativedelta(months=months)
             if cycle == "monthly" and len(dates) >= 2:
                 anchor_day = int(median([d.day for d in dates[-3:]]))
-                try:
-                    next_due = next_due.replace(day=min(anchor_day, 28))
-                except ValueError:
-                    pass
+                next_due = _clamp_day(next_due, anchor_day)
         # catch-up (2.21): if last amount is ~2x expected of previous ones, push due by an extra cycle
-        if len(amounts) >= 3 and not variable:
+        if len(amounts) >= 3 and not variable and last_paid:
             prev = median(amounts[:-1])
             n = round(amounts[-1] / prev) if prev else 1
+            nominal = CYCLES[cycle][0] if cycle in CYCLES else None
+            gap_says_missed = bool(gaps and nominal) and abs(gaps[-1] - n * nominal) <= CYCLES[cycle][2] * n
             if n in (2, 3) and abs(amounts[-1] - n * prev) <= prev * 0.05:
                 next_due = last_paid.date + relativedelta(months=months * n)
                 expected = prev
                 flags.append(f"catch_up_{n}_cycles")
                 if "price_changed" in flags:
                     flags.remove("price_changed")
+            elif n in (2, 3) and gap_says_missed and prev * n * 0.95 <= amounts[-1] <= prev * n * 1.5:
+                # missed cycles paid together at a new (higher) price: catch-up AND price change (2.17 + 2.21)
+                next_due = last_paid.date + relativedelta(months=months * n)
+                expected = round(amounts[-1] / n, 2)
+                flags.append(f"catch_up_{n}_cycles")
+                if "price_changed" not in flags:
+                    flags.append("price_changed")
     elif stream_type == "prepaid" and len(dates) >= 2:
         avg_gap = sum(gaps) / len(gaps)
         flags.append(f"topup_every_{int(avg_gap)}d")
