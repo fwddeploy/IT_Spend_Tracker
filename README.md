@@ -86,7 +86,7 @@ docker-compose.yml  app + Postgres
 
 ## Configuration
 
-Copy `.env.example` to `.env`. Everything is optional except in production:
+Copy `.env.example` to `.env` in the project root. Both `docker compose` and `uvicorn` read it automatically. Everything is optional except in production:
 
 | Variable | What it is |
 |---|---|
