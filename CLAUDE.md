@@ -29,6 +29,14 @@ docker compose up --build                        # app + Postgres on :8000
 ```
 Demo login: `demo@ittracker.local / demo1234`. Env vars are documented in `.env.example` and README.
 
+## Deploying
+
+`deploy/setup.sh` sets up a fresh Ubuntu server in one command (Docker, firewall, code, generated
+passwords, `docker-compose.prod.yml` = app + Postgres + Caddy for automatic HTTPS).
+`deploy/update.sh` pulls and restarts; `deploy/backup.sh` dumps the database. See `deploy/README.md`.
+Production differences from dev: `SEED_SAMPLE=0`, `COOKIE_SECURE=1`, the app port is not exposed
+(Caddy proxies to it), and passwords come from the server's `.env`.
+
 ## Rules when changing things
 
 1. **Tests first.** Every engine rule has a numbered test (`docs/research/3-engine-logic-and-test-cases.md` → `tests/test_engine*.py`). Add or update the test, then the code. Run the full suite; on Postgres too if you touched models (`DATABASE_URL=postgresql+psycopg2://ittracker:ittracker@localhost:5432/ittracker`).

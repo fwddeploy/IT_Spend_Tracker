@@ -1,0 +1,65 @@
+# Production stack: app + Postgres + Caddy (automatic HTTPS).
+# Used by deploy/setup.sh. Reads its values from the .env file next to it.
+#   docker compose -f docker-compose.prod.yml up -d --build
+services:
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ittracker
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set — run deploy/setup.sh}
+      POSTGRES_DB: ittracker
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ittracker"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: always
+    expose:
+      - "8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg2://ittracker:${POSTGRES_PASSWORD}@db:5432/ittracker
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is not set — run deploy/setup.sh}
+      SEED_SAMPLE: ${SEED_SAMPLE:-0}
+      SCHEDULER: "1"
+      COOKIE_SECURE: "1"
+      CORS_ORIGINS: https://${DOMAIN}
+      APP_ACCESS_KEY: ${APP_ACCESS_KEY:-}
+      WA_PHONE_NUMBER_ID: ${WA_PHONE_NUMBER_ID:-}
+      WA_TOKEN: ${WA_TOKEN:-}
+      WA_TEMPLATE_NAME: ${WA_TEMPLATE_NAME:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2-alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN is not set — run deploy/setup.sh}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

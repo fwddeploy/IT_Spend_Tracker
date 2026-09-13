@@ -98,11 +98,22 @@ Copy `.env.example` to `.env` in the project root. Both `docker compose` and `uv
 | `APP_ACCESS_KEY` | Optional extra key for scripts (`X-Access-Key` header) besides login. |
 | `SCHEDULER` | `0` disables the hourly reminder job (tests). |
 
+## Hosting it for a pilot
+
+One small server (2 GB, Ubuntu) runs everything with automatic HTTPS. On the server:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fwddeploy/IT_Spend_Tracker/main/deploy/setup.sh | sudo bash
+```
+
+Full instructions, updates, backups and troubleshooting: [deploy/README.md](deploy/README.md).
+
 ## Documentation
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — data flow, models, every engine rule, status maths, auth, reminders.
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — set-up, tests, how to add a vendor / a bank format / a route, migrations, deploy checklist.
 - [docs/API.md](docs/API.md) — every endpoint with request/response shapes.
+- [deploy/README.md](deploy/README.md) — put it on a server: one command, HTTPS, updates, backups.
 - [docs/ROADMAP.md](docs/ROADMAP.md) — what's next (email intake, WhatsApp bill photos, GST portal, Zoho/M365 connectors).
 - [docs/research/](docs/research/) — the market, integration and engine-logic research the design is based on.
 - [docs/history/](docs/history/) — the original build plan, review reports and status notes.
