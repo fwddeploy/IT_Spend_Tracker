@@ -18,6 +18,64 @@ class Company(Base):
     gstin: Mapped[str | None] = mapped_column(String(20), nullable=True)
     fy_start_month: Mapped[int] = mapped_column(Integer, default=4)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # settings (v2)
+    short_name: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    owner_phone: Mapped[str | None] = mapped_column(String(30), nullable=True)      # E.164, e.g. +919876543210
+    owner_email: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    accountant_email: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    whatsapp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    email_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    reminder_days_before: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # {"monthly":5,"quarterly":10,"yearly":30}
+    weekly_digest_day: Mapped[str | None] = mapped_column(String(3), nullable=True)  # "mon".."sun" | None
+
+
+DEFAULT_REMINDER_DAYS = {"monthly": 5, "quarterly": 10, "yearly": 30}
+
+
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120))
+    email: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class Membership(Base):
+    """Who may open which company, and what they may do there: owner | accountant | viewer."""
+    __tablename__ = "memberships"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    role: Mapped[str] = mapped_column(String(12), default="viewer")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ReminderLog(Base):
+    __tablename__ = "reminder_log"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    stream_id: Mapped[int | None] = mapped_column(ForeignKey("streams.id"), nullable=True, index=True)
+    vendor_name: Mapped[str] = mapped_column(String(120))
+    due: Mapped[date | None] = mapped_column(Date, nullable=True)
+    channel: Mapped[str] = mapped_column(String(12))        # whatsapp | email
+    to: Mapped[str] = mapped_column(String(200))
+    sent_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    status: Mapped[str] = mapped_column(String(30))         # sent | failed | skipped_not_configured
+    message: Mapped[str] = mapped_column(Text, default="")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class Event(Base):
+    """Audit trail: who did what on a company (patch / mark-paid / confirm / answer / upload / settings / alias delete)."""
+    __tablename__ = "events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    user: Mapped[str] = mapped_column(String(200), default="")
+    action: Mapped[str] = mapped_column(String(40))
+    target: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class Account(Base):
@@ -154,7 +212,7 @@ class Stream(Base):
     last_paid_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     next_due: Mapped[date | None] = mapped_column(Date, nullable=True)
     anchor_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    status: Mapped[str] = mapped_column(String(20), default="needs_confirm")
+    status: Mapped[str] = mapped_column(String(20), default="needs_confirm", index=True)
     confidence: Mapped[int] = mapped_column(Integer, default=0)
     auto_renew: Mapped[bool] = mapped_column(Boolean, default=False)
     paid_from: Mapped[str | None] = mapped_column(String(120), nullable=True)
@@ -167,6 +225,7 @@ class Stream(Base):
     is_user_modified: Mapped[bool] = mapped_column(Boolean, default=False)
     user_fields: Mapped[dict] = mapped_column(JSON, default=dict)   # fields the user set; engine never overwrites these
     dismissed: Mapped[bool] = mapped_column(Boolean, default=False)
+    extra: Mapped[dict | None] = mapped_column(JSON, nullable=True)   # engine extras: rcm_gst, quantity, unit_price, change_note, supplier_history
     occurrences_count: Mapped[int] = mapped_column(Integer, default=0)
     sources: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -183,7 +242,7 @@ class Question(Base):
     context: Mapped[dict] = mapped_column(JSON, default=dict)
     options: Mapped[list] = mapped_column(JSON, default=list)
     stream_id: Mapped[int | None] = mapped_column(ForeignKey("streams.id"), nullable=True)
-    answered: Mapped[bool] = mapped_column(Boolean, default=False)
+    answered: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     answer: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

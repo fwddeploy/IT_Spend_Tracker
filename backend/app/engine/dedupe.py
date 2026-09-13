@@ -9,6 +9,8 @@ Rules implemented (numbers refer to research/3-engine-logic-and-test-cases.md):
 - GST / TDS relations when matching an invoice to a bank debit (2.32, 2.34)
 - split payments summing to an invoice merged (2.22, 2.23)
 - tally/email rows with no bank line within the window become "unpaid / booked-not-paid" occurrences (2.33)
+- bank cheque line + Tally voucher with the same cheque number -> Tally supplies the payee (2.37)
+- hardware-only bills go to the one-time "hardware" bucket; mixed bills are flagged (2.29)
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
@@ -16,7 +18,7 @@ from datetime import date, timedelta
 from rapidfuzz import fuzz
 
 from app.engine.vendors import Catalog, Resolution
-from app.engine.normalize import AUTO_MODES, payee_tokens
+from app.engine.normalize import AUTO_MODES, payee_tokens, instrument_no as _instrument_from_text, same_instrument
 
 WINDOW = {  # days, by source pair
     ("bank", "email"): 15, ("bank", "gst"): 60, ("bank", "tally"): 60, ("card", "email"): 15,
@@ -48,6 +50,7 @@ class Row:
     is_personal: bool = False
     account_id: int | None = None
     account_label: str | None = None
+    instrument_no: str | None = None   # cheque number (bank ref column / Tally bank allocation); derived from narration if None
     res: Resolution = field(default_factory=Resolution)
 
 
@@ -80,6 +83,8 @@ class Occ:
     flags: list[str] = field(default_factory=list)
     res: Resolution = field(default_factory=Resolution)
     product_soft: bool = False   # product text came from a narration, not from vendor recognition
+    instrument_no: str | None = None
+    fy: str | None = None        # "2026-27": financial year of the service period (set by build_streams)
 
 
 def _narration_product(raw: str) -> str | None:
@@ -147,9 +152,34 @@ def _match_quality(bank: float, bill: Row) -> int:
     return 3
 
 
+def _route_hardware(r: Row, catalog: Catalog) -> None:
+    """2.29: a bill whose text is hardware-only becomes a one-time hardware purchase; hardware + software words on
+    one bill keep the software vendor but are flagged. Unknown bank payees whose narration says LAPTOP/PRINTER etc.
+    are hardware too."""
+    if r.res.is_fee or r.res.excluded or r.direction == "credit":
+        return
+    text = f"{r.raw_description or ''} {r.ledger or ''}"
+    if not catalog.is_hardware_text(text):
+        return
+    if r.source in BILL_SOURCES:
+        if catalog.is_software_text(text):
+            if r.res.vendor_key != "hardware" and "mixed_hardware_bill" not in r.res.flags:
+                r.res.flags.append("mixed_hardware_bill")
+            return
+        r.res = Resolution(vendor_key="hardware", product=r.res.product or "Hardware purchase", method="hardware",
+                           confidence=0.9, suggested_cycle="one_time", looks_it=True, term_months=None)
+    elif not r.res.vendor_key and not catalog.is_software_text(text):
+        r.res = Resolution(vendor_key="hardware", product="Hardware purchase", method="hardware",
+                           confidence=0.7, suggested_cycle="one_time", looks_it=True)
+
+
 def build_occurrences(rows: list[Row], catalog: Catalog, today: date | None = None) -> list[Occ]:
     today = today or date.today()
     rows = sorted(rows, key=lambda r: (r.date, r.id))
+    for r in rows:
+        if r.instrument_no is None and (r.source in BILL_SOURCES or r.payment_mode == "cheque"):
+            r.instrument_no = _instrument_from_text(r.raw_description)
+        _route_hardware(r, catalog)
     debits: list[Row] = []
     credits: list[Row] = []
     fees: list[Row] = []
@@ -192,7 +222,8 @@ def build_occurrences(rows: list[Row], catalog: Catalog, today: date | None = No
             sources=[p.source], raw_row_ids=[p.id], raw_description=p.raw_description,
             currency=p.currency, fx_amount=p.fx_amount, payment_mode=p.payment_mode,
             auto_renew=(p.payment_mode in AUTO_MODES), is_personal=p.is_personal,
-            account_label=p.account_label, res=p.res,
+            account_label=p.account_label, res=p.res, instrument_no=p.instrument_no,
+            flags=list(p.res.flags) if getattr(p.res, "flags", None) else [],
         ))
 
     # --- fold forex markup lines into the previous foreign debit (2.31) ---
@@ -208,8 +239,23 @@ def build_occurrences(rows: list[Row], catalog: Catalog, today: date | None = No
     # --- attach bills (tally / email / gst) to payments; unmatched bills become unpaid occurrences ---
     for b in bills:
         matched = None
+        # 0. cheque number (2.37): a bank cheque line has no payee; the Tally voucher with the same instrument
+        #    number supplies party / vendor / product. Amount must still relate (cheque numbers repeat across books).
+        if b.instrument_no:
+            for o in occs:
+                if o.instrument_no and same_instrument(o.instrument_no, b.instrument_no) \
+                        and abs((o.date - b.date).days) <= 90 and _amount_relation(o.amount_paid, b)[0]:
+                    matched = o
+                    ok, taxable, gst, tds = _amount_relation(o.amount_paid, b)
+                    o.taxable, o.gst, o.tds = taxable, gst, tds
+                    if tds:
+                        o.amount_gross = round(o.amount_paid + tds, 2)
+                    if not o.vendor_key or o.payee_clean.startswith("CHQ "):
+                        o.payee_clean = b.payee_clean
+                    o.flags.append("cheque_matched")
+                    break
         # 1. exact invoice number
-        if b.invoice_no:
+        if not matched and b.invoice_no:
             matched = next((o for o in occs if o.invoice_no and o.invoice_no == b.invoice_no), None)
         # 2. vendor + amount relation + date window
         if not matched:
@@ -273,6 +319,9 @@ def build_occurrences(rows: list[Row], catalog: Catalog, today: date | None = No
             matched.invoice_no = matched.invoice_no or b.invoice_no
             matched.period_from = matched.period_from or b.period_from
             matched.period_to = matched.period_to or b.period_to
+            for fl in getattr(b.res, "flags", []) or []:
+                if fl not in matched.flags:
+                    matched.flags.append(fl)
             # bill rows often carry the better vendor/product (Tally narration, invoice text)
             if b.res.vendor_key and (not matched.vendor_key or matched.res.confidence < b.res.confidence):
                 matched.vendor_key, matched.product, matched.resolution = b.res.vendor_key, b.res.product or matched.product, "cross"
@@ -293,7 +342,8 @@ def build_occurrences(rows: list[Row], catalog: Catalog, today: date | None = No
                 sources=[b.source], raw_row_ids=[b.id], raw_description=b.raw_description,
                 currency=b.currency, taxable=b.taxable, gst=b.gst, invoice_no=b.invoice_no,
                 period_from=b.period_from, period_to=b.period_to, unpaid=(b.date >= today - timedelta(days=60)),
-                account_label=b.account_label, res=b.res, flags=["booked_not_paid"] if b.date >= today - timedelta(days=60) else ["no_bank_match"],
+                account_label=b.account_label, res=b.res, instrument_no=b.instrument_no,
+                flags=(["booked_not_paid"] if b.date >= today - timedelta(days=60) else ["no_bank_match"]) + list(getattr(b.res, "flags", []) or []),
             ))
 
     # --- cross-source vendor rescue: unknown bank payee, but a bill row of same amount nearby already resolved ---

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import type { StreamStatus } from '../lib/api'
-import { STATUS_LABEL } from '../lib/format'
+import { STATUS_LABEL, sourceLabel } from '../lib/format'
 
 export function StatusPill({ status }: { status: StreamStatus }) {
   let cls = 'pill-neutral'
@@ -59,11 +59,17 @@ export function Sources({ sources }: { sources: string[] }) {
     <>
       {sources.map((s) => (
         <span key={s} className="tag">
-          {s}
+          {sourceLabel(s)}
         </span>
       ))}
     </>
   )
+}
+
+/** "Seen in: Bank statement · Tally" */
+export function SeenIn({ sources }: { sources: string[] }) {
+  if (!sources || sources.length === 0) return <span className="muted">Not seen in any statement yet</span>
+  return <span>Seen in: {sources.map(sourceLabel).join(' · ')}</span>
 }
 
 export function NoCompany() {

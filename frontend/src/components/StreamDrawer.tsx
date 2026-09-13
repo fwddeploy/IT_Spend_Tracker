@@ -12,8 +12,8 @@ import {
 } from '../lib/api'
 import { useFetch, errorText } from '../lib/useFetch'
 import { notifyDataChanged } from '../lib/events'
-import { CYCLE_LABEL, fmtDate, rupees, todayISO, humanize } from '../lib/format'
-import { ErrorMsg, Loading, Sources, StatusPill } from './ui'
+import { CYCLE_LABEL, fmtDate, rupees, todayISO, humanize, confidenceLabel, flagLabel } from '../lib/format'
+import { ErrorMsg, Loading, SeenIn, Sources, StatusPill } from './ui'
 
 interface Props {
   companyId: number
@@ -21,6 +21,8 @@ interface Props {
   onClose: () => void
   /** Called whenever the stream changes so the parent list can update in place. */
   onChanged: (s: StreamOut) => void
+  /** false for viewers: no Mark paid / edit controls. */
+  canEdit?: boolean
 }
 
 interface EditForm {
@@ -54,9 +56,10 @@ function toForm(s: StreamOut): EditForm {
   }
 }
 
-export default function StreamDrawer({ companyId, streamId, onClose, onChanged }: Props) {
+export default function StreamDrawer({ companyId, streamId, onClose, onChanged, canEdit = true }: Props) {
   const detail = useFetch(() => getStream(companyId, streamId), [companyId, streamId])
   const [form, setForm] = useState<EditForm | null>(null)
+  const [showDetails, setShowDetails] = useState(!canEdit)
   const [saving, setSaving] = useState(false)
   const [saveErr, setSaveErr] = useState<string | null>(null)
   const [saveOk, setSaveOk] = useState(false)
@@ -251,10 +254,10 @@ export default function StreamDrawer({ companyId, streamId, onClose, onChanged }
               </button>
             </div>
 
-            {s.status === 'needs_confirm' && (
+            {s.status === 'needs_confirm' && canEdit && (
               <div className="msg msg-warn" style={{ marginBottom: 12 }}>
                 <div style={{ marginBottom: 8 }}>
-                  We think this is a repeating payment. Does it?
+                  Is this a subscription? We think this payment repeats.
                 </div>
                 <div className="row">
                   <button
@@ -265,8 +268,9 @@ export default function StreamDrawer({ companyId, streamId, onClose, onChanged }
                     Yes, this repeats
                   </button>
                   <button className="btn btn-sm" disabled={confirming} onClick={() => doConfirm(false)}>
-                    No
+                    No, hide this payee
                   </button>
+                  <span className="small muted">(undo in Settings)</span>
                 </div>
                 {confirmErr && (
                   <div style={{ marginTop: 8 }}>
@@ -276,79 +280,66 @@ export default function StreamDrawer({ companyId, streamId, onClose, onChanged }
               </div>
             )}
 
-            <dl className="kv">
-              <dt>Expected</dt>
-              <dd className="num">{rupees(s.expected_amount, { decimals: true })}</dd>
-              <dt>Average paid</dt>
-              <dd className="num">{rupees(s.avg_amount, { decimals: true })}</dd>
-              <dt>Monthly-equivalent</dt>
-              <dd className="num">{rupees(s.monthly_equivalent)}</dd>
-              <dt>Cycle</dt>
-              <dd>
-                {CYCLE_LABEL[s.cycle] ?? s.cycle}
-                {s.cycle_months ? <span className="muted"> ({s.cycle_months} mo)</span> : null}
-              </dd>
-              <dt>Last paid</dt>
-              <dd>{fmtDate(s.last_paid_date)}</dd>
-              <dt>Next due</dt>
-              <dd>{ENDED.has(s.status) ? <span className="muted">— ({humanize(s.status)})</span> : fmtDate(s.next_due)}</dd>
-              <dt>Auto-renew</dt>
-              <dd>{s.auto_renew === null || s.auto_renew === undefined ? '—' : s.auto_renew ? 'Yes' : 'No'}</dd>
-              <dt>Confidence</dt>
-              <dd className="num">{s.confidence}%</dd>
-              <dt>Sources</dt>
-              <dd>
-                <Sources sources={s.sources} />
-              </dd>
-              <dt>First seen</dt>
-              <dd>{fmtDate(s.first_seen)}</dd>
-              {s.flags && s.flags.length > 0 && (
-                <>
-                  <dt>Flags</dt>
-                  <dd>
-                    {s.flags.map((f) => (
-                      <span key={f} className="tag" title={f}>
-                        {humanize(f)}
-                      </span>
-                    ))}
-                  </dd>
-                </>
-              )}
-            </dl>
+            <div className="summary-line">
+              <span>
+                <span className="muted">Amount</span> <strong className="num">{rupees(s.expected_amount ?? s.avg_amount, { decimals: true })}</strong>
+              </span>
+              <span>
+                <span className="muted">How often</span> {CYCLE_LABEL[s.cycle] ?? s.cycle}
+              </span>
+              <span>
+                <span className="muted">Next due</span>{' '}
+                {ENDED.has(s.status) ? <span className="muted">— ({humanize(s.status)})</span> : fmtDate(s.next_due)}
+              </span>
+              <span>
+                <span className="muted">Last paid</span> {fmtDate(s.last_paid_date)}
+              </span>
+            </div>
+            {s.change_note && <div className="msg msg-muted" style={{ marginTop: 10 }}>{s.change_note}</div>}
 
-            <div className="section">
-              <h3>Actions</h3>
-              <div className="row" style={{ alignItems: 'flex-end' }}>
-                <label className="field" style={{ marginBottom: 0 }}>
-                  <span>Paid on</span>
-                  <input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
-                </label>
-                <label className="field" style={{ marginBottom: 0 }}>
-                  <span>Amount (optional)</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={payAmount}
-                    onChange={(e) => setPayAmount(e.target.value)}
-                    placeholder="expected"
-                  />
-                </label>
-                <button className="btn btn-primary" disabled={paying || !payDate} onClick={doMarkPaid}>
-                  {paying ? 'Saving…' : 'Mark paid'}
-                </button>
-                {s.pay_url && (
-                  <a className="btn" href={s.pay_url} target="_blank" rel="noopener noreferrer">
-                    Pay now
-                  </a>
+            {canEdit && (
+              <div className="section">
+                <h3>Mark paid</h3>
+                <div className="row" style={{ alignItems: 'flex-end' }}>
+                  <label className="field" style={{ marginBottom: 0 }}>
+                    <span>Paid on</span>
+                    <input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
+                  </label>
+                  <label className="field" style={{ marginBottom: 0 }}>
+                    <span>Amount (optional)</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={payAmount}
+                      onChange={(e) => setPayAmount(e.target.value)}
+                      placeholder="expected"
+                    />
+                  </label>
+                  <button className="btn btn-primary" disabled={paying || !payDate} onClick={doMarkPaid}>
+                    {paying ? 'Saving…' : 'Mark paid'}
+                  </button>
+                  {s.pay_url && (
+                    <a className="btn" href={s.pay_url} target="_blank" rel="noopener noreferrer">
+                      Pay now
+                    </a>
+                  )}
+                </div>
+                {payErr && (
+                  <div style={{ marginTop: 8 }}>
+                    <ErrorMsg>{payErr}</ErrorMsg>
+                  </div>
                 )}
               </div>
-              {payErr && (
-                <div style={{ marginTop: 8 }}>
-                  <ErrorMsg>{payErr}</ErrorMsg>
-                </div>
-              )}
-            </div>
+            )}
+            {!canEdit && s.pay_url && (
+              <div className="section">
+                <a className="btn" href={s.pay_url} target="_blank" rel="noopener noreferrer">
+                  Pay now
+                </a>
+              </div>
+            )}
 
+            {canEdit && (
             <div className="section">
               <h3>Edit</h3>
               <div className="form-row">
@@ -369,7 +360,7 @@ export default function StreamDrawer({ companyId, streamId, onClose, onChanged }
                   />
                 </label>
                 <label className="field">
-                  <span>Billing cycle</span>
+                  <span>How often</span>
                   <select
                     value={form.cycle}
                     onChange={(e) => setForm({ ...form, cycle: e.target.value as Cycle })}
@@ -449,13 +440,85 @@ export default function StreamDrawer({ companyId, streamId, onClose, onChanged }
                 )}
                 {saveOk && !dirty && <span className="small" style={{ color: 'var(--ok)' }}>Saved.</span>}
                 {s.is_user_modified && (
-                  <span className="small muted">Edited by you — the engine will not overwrite these fields.</span>
+                  <span className="small muted">Edited by you — we won't change these fields on re-check.</span>
                 )}
               </div>
               {saveErr && (
                 <div style={{ marginTop: 8 }}>
                   <ErrorMsg>{saveErr}</ErrorMsg>
                 </div>
+              )}
+            </div>
+            )}
+
+            <div className="section">
+              <button
+                type="button"
+                className="btn-link details-toggle"
+                aria-expanded={showDetails}
+                onClick={() => setShowDetails((v) => !v)}
+              >
+                {showDetails ? '▾' : '▸'} Details
+              </button>
+              {showDetails && (
+                <dl className="kv" style={{ marginTop: 8 }}>
+                  <dt>Average paid</dt>
+                  <dd className="num">{rupees(s.avg_amount, { decimals: true })}</dd>
+                  <dt>Per month</dt>
+                  <dd className="num">{rupees(s.monthly_equivalent)}</dd>
+                  {s.quantity != null && s.unit_price != null && (
+                    <>
+                      <dt>Seats</dt>
+                      <dd className="num">
+                        {s.quantity} {s.quantity === 1 ? 'user' : 'users'} × {rupees(s.unit_price, { decimals: true })}
+                      </dd>
+                    </>
+                  )}
+                  {s.rcm_gst != null && s.rcm_gst > 0 && (
+                    <>
+                      <dt>GST</dt>
+                      <dd>You pay 18% GST on this yourself (reverse charge): ≈ {rupees(s.rcm_gst)}</dd>
+                    </>
+                  )}
+                  <dt>Type</dt>
+                  <dd>{humanize(s.stream_type)}</dd>
+                  <dt>Auto-renews</dt>
+                  <dd>{s.auto_renew === null || s.auto_renew === undefined ? '—' : s.auto_renew ? 'Yes' : 'No'}</dd>
+                  <dt>How sure we are</dt>
+                  <dd>
+                    {confidenceLabel(s.confidence)} <span className="muted small">({s.confidence}%)</span>
+                  </dd>
+                  <dt>First seen</dt>
+                  <dd>{fmtDate(s.first_seen)}</dd>
+                  {s.fy && (
+                    <>
+                      <dt>Financial year</dt>
+                      <dd>{s.fy}</dd>
+                    </>
+                  )}
+                  <dt>Where we saw it</dt>
+                  <dd>
+                    <SeenIn sources={s.sources} />
+                  </dd>
+                  {s.supplier_history && s.supplier_history.length > 0 && (
+                    <>
+                      <dt>Supplier changed</dt>
+                      <dd>{s.supplier_history.join(' → ')}</dd>
+                    </>
+                  )}
+                  {((s.flags_human && s.flags_human.length > 0) || (s.flags && s.flags.length > 0)) && (
+                    <>
+                      <dt>Notes from us</dt>
+                      <dd>
+                        {(s.flags_human && s.flags_human.length > 0 ? s.flags_human : s.flags.map(flagLabel)).map(
+                          (f, i) => (
+                            <div key={i}>{f}</div>
+                          ),
+                        )}
+                      </dd>
+                    </>
+                  )}
+                </dl>
               )}
             </div>
 
@@ -473,7 +536,7 @@ export default function StreamDrawer({ companyId, streamId, onClose, onChanged }
                         <th className="right">GST</th>
                         <th>Mode</th>
                         <th>Period</th>
-                        <th>Source</th>
+                        <th>Seen in</th>
                       </tr>
                     </thead>
                     <tbody>

@@ -50,6 +50,8 @@ class Resolution:
     suggested_cycle: str | None = None
     term_months: int | None = None   # "3 years", "annual", "FY 26-27" found in the narration
     candidates: list[str] = field(default_factory=list)  # for reseller: product menu
+    bundle: bool = False          # known reseller, product unknown, amount >= 5000: one bill, several products (2.28)
+    flags: list[str] = field(default_factory=list)   # e.g. mixed_hardware_bill (2.29)
 
 
 _TERM_RX = [
@@ -90,6 +92,13 @@ class Catalog:
         self.fingerprints = raw.get("fingerprints", [])
         self.narration_hints = [(re.compile(h["pattern"], re.I), h.get("vendor"), h.get("product")) for h in raw.get("narration_hints", [])]
         self.hardware_words = [w.upper() for w in raw.get("hardware_words", [])]
+        self._hardware_rx = re.compile(r"\b(?:" + "|".join(re.escape(w) for w in self.hardware_words) + r")S?\b", re.I) if self.hardware_words else None
+        self.software_words = [w.upper() for w in raw.get("software_words", [])]
+        self._software_rx = re.compile(r"\b(?:" + "|".join(re.escape(w) for w in self.software_words) + r")S?\b", re.I) if self.software_words else None
+        # per-seat list prices: {vendor_key: [unit, ...]} (2.16 / Layer 2 amount fingerprints)
+        self.seat_prices: dict[str, list[float]] = {}
+        for sp in raw.get("seat_prices", []):
+            self.seat_prices.setdefault(sp["vendor"], []).append(float(sp["unit"]))
         # company-scoped learned aliases: {company_id: [(pattern_rx, vendor_key, product)]}
         self.learned: dict[int, list[tuple[re.Pattern, str, str | None]]] = {}
 
@@ -128,8 +137,22 @@ class Catalog:
         return any(w in clean for w in self.reseller_words)
 
     def is_hardware_text(self, text: str) -> bool:
-        t = (text or "").upper()
-        return any(w in t for w in self.hardware_words)
+        """Whole-word match ("RAM" must not hit PROGRAMME, "UPS" must not hit UPSTREAM)."""
+        return bool(self._hardware_rx and self._hardware_rx.search(text or ""))
+
+    def is_software_text(self, text: str) -> bool:
+        return bool(self._software_rx and self._software_rx.search(text or ""))
+
+    def infer_quantity(self, vendor_key: str | None, amount: float | None) -> tuple[int, float] | None:
+        """(seats, unit price) when amount is within 1% of k x a known per-seat price, 1 <= k <= 500.
+        The smallest unit that fits wins (Rs 1,740 = 12 x 145, not 1 x 1,740)."""
+        if not vendor_key or not amount or amount <= 0:
+            return None
+        for unit in sorted(self.seat_prices.get(vendor_key, [])):
+            k = int(round(amount / unit))
+            if 1 <= k <= 500 and abs(amount - k * unit) <= amount * 0.01:
+                return k, unit
+        return None
 
     # ---- main entry ----
     def resolve(self, clean: str, amount: float | None = None, narration: str = "", ledger: str = "",
@@ -177,6 +200,7 @@ class Catalog:
                 res.candidates = list(sells)
                 res.method = "reseller"
                 res.confidence = 0.6
+                res.looks_it = True
                 # narration/ledger may tell which product
                 for hrx, hv, hp in self.narration_hints:
                     if hv and hrx.search(text):
@@ -190,6 +214,8 @@ class Catalog:
                         res.is_reseller = True
                         res.suggested_cycle = fp.get("cycle")
                         return res
+                # one bank line, no product: a bundle (several products on one dealer bill) if it is big enough (2.28)
+                res.bundle = bool(amount and amount >= 5000)
                 return res
 
         # 4. narration hints with a vendor (e.g. Tally purchase register line "SolidWorks subscription 2026")

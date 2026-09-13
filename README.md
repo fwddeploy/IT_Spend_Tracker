@@ -11,6 +11,7 @@ messy payments in  →  one engine  →  one clean list + due dates + reminders
 ```bash
 docker compose up --build
 # open http://localhost:8000  — a sample factory is already loaded
+# log in as  demo@ittracker.local / demo1234
 ```
 
 ## Run it (local dev)
@@ -32,11 +33,56 @@ Tests:
 
 ```bash
 cd backend
-python -m pytest -q                 # engine cases + end-to-end API flow
-DATABASE_URL=postgresql+psycopg2://ittracker:ittracker@localhost:5432/ittracker python -m pytest -q tests/test_api.py
+python -m pytest -q                 # engine cases + end-to-end API flows (SQLite temp files)
+DATABASE_URL=postgresql+psycopg2://ittracker:ittracker@localhost:5432/ittracker python -m pytest -q   # same suite on Postgres (drops + recreates the schema)
 ```
 
-Optional: set `APP_ACCESS_KEY=somesecret` (in `.env` / compose) and the page will ask for that key once before showing any data. Set `SEED_SAMPLE=0` to start empty. See `docs/REVIEW-v0.1.md` for what was reviewed, fixed and what is still open.
+## Login, roles, demo account
+
+Every `/api` route needs a login (cookie session, 30 days) — except `/api/auth/*` and `/api/health`.
+
+- **Demo**: on an empty database the app seeds a sample factory (`SEED_SAMPLE=1`, the default) owned by
+  **demo@ittracker.local / demo1234** (also printed in the startup log). Set `SEED_SAMPLE=0` to start empty and
+  register your own account at `POST /api/auth/register` (this creates your first company).
+- **Roles** per company: `owner` (everything, incl. settings, delete, invite), `accountant` (upload, edit lines, answer
+  questions, send reminders), `viewer` (read only). Owners invite people with `POST /api/auth/invite` — a new user gets a
+  one-time password in the response (no email sending in this build).
+- **Scripts**: if `APP_ACCESS_KEY` is set, requests carrying `X-Access-Key: <key>` are treated as an owner of every company.
+- Set `SECRET_KEY` in production (it signs the cookie); `COOKIE_SECURE=1` behind HTTPS.
+
+## Reminders (WhatsApp / email)
+
+A scheduler inside the app runs every hour (`SCHEDULER=0` disables it). For each company with a channel switched on in
+Settings (`owner_phone` + `whatsapp_enabled`, `owner_email`/`accountant_email` + `email_enabled`), it sends a reminder for every
+line with the bell on when `next_due - today` equals the configured days-before (monthly 5 / quarterly 10 / yearly 30 by
+default), and again every 7 days while a line is overdue. Each send is written to the reminder log (status `sent`, `failed`
+or `skipped_not_configured`); `GET /api/companies/{id}/reminders` previews what will go out, `POST .../reminders/send-now`
+sends one line immediately, `POST /api/internal/reminders/run` runs the whole loop by hand.
+
+Environment (all optional — without them reminders are logged as `skipped_not_configured`, nothing breaks):
+
+| Channel | Variables |
+|---|---|
+| WhatsApp (Meta Cloud API) | `WA_PHONE_NUMBER_ID`, `WA_TOKEN`, optional `WA_TEMPLATE_NAME` (approved template; empty = plain text message, POC), `WA_TEMPLATE_LANG=en`, `WA_API_VERSION=v20.0` |
+| Email (SMTP) | `SMTP_HOST`, `SMTP_PORT` (587 STARTTLS / 465 SSL / 25 plain), `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` |
+
+See `.env.example` for the full list.
+
+## Export, FY view, share
+
+- `GET /api/companies/{id}/export.xlsx` — Excel with Lines, Upcoming (12 months), Payments, Questions.
+- `GET /api/companies/{id}/dashboard?fy=2026` — financial-year view (start month from Settings; past months show actual
+  payments, future months the dues).
+- `GET /api/companies/{id}/share-text` — a WhatsApp-ready summary for the owner.
+- `GET /api/companies/{id}/events` — audit log of edits, uploads, answers and settings changes.
+
+## Database
+
+Postgres in production: the schema is managed by Alembic (`backend/alembic/`); the app runs `alembic upgrade head` on
+start (a database created by v0.1 is adopted automatically). SQLite dev/tests use `create_all`. To add a column: edit
+`models.py`, then `cd backend && DATABASE_URL=... alembic revision --autogenerate -m "what changed"`.
+
+See `docs/REVIEW-v0.1.md` for what was reviewed, fixed and what is still open, and `docs/API-v2-additions.md` for the v2 API.
 
 ## What's inside
 
@@ -44,7 +90,11 @@ Optional: set `APP_ACCESS_KEY=somesecret` (in `.env` / compose) and the page wil
 backend/
   app/
     main.py            FastAPI app; serves API + built frontend
-    models.py          Company, Account, RawRow, Vendor, VendorAlias, Occurrence, Stream, Question
+    models.py          Company, User, Membership, Account, RawRow, Vendor, VendorAlias, Occurrence, Stream, Question,
+                       ReminderLog, Event
+    auth.py            bcrypt passwords, signed-cookie sessions, roles (owner / accountant / viewer)
+    reminders.py       what is due for a nudge; WhatsApp (Meta Cloud API) + email (SMTP) senders; hourly run
+    export.py          Excel export
     data/vendors.yaml  vendor dictionary: aliases, categories, default cycles, resellers, amount fingerprints,
                        narration hints, exclusions (bank fees, government, salary…), gateways
     parsers/           Excel/CSV/PDF statement + Tally register auto-detect; Tally XML
@@ -58,7 +108,8 @@ backend/
     sample.py          realistic sample company (also writes backend/samples/*.xlsx)
   tests/               62 engine/parser cases from the research + end-to-end API flows
 frontend/              Vite + React + TS: Home, Lines, Upcoming, Attention, Upload
-docs/API.md            API contract
+  alembic/             Postgres migrations
+docs/API.md            API contract (v1) · docs/API-v2-additions.md (v2: auth, settings, reminders, export…)
 ```
 
 ## How it works (short)
@@ -79,4 +130,4 @@ Edit `backend/data/vendors.yaml` — no code change. A payee the user classifies
 
 ## Next (not in this build)
 
-Unique inbound email address + forwarding guide · WhatsApp intake and reminders · GSTR-2B pull via a GSP · Zoho Books / Microsoft 365 connectors · reminder scheduler · multi-user auth.
+Unique inbound email address + forwarding guide · WhatsApp inbound ("PAID" replies) · GSTR-2B pull via a GSP · Zoho Books / Microsoft 365 connectors · invite emails.

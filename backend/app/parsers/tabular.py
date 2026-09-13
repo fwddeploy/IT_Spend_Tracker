@@ -12,6 +12,57 @@ from datetime import date, datetime
 import pandas as pd
 from dateutil import parser as dparser
 
+from app.engine.normalize import instrument_no as _instrument_from_text, detect_mode as _detect_mode
+
+# Bank names as they appear in the statement preamble ("HDFC BANK LTD", "ICICI Bank Limited", "State Bank of India").
+BANK_PATTERNS: list[tuple[str, re.Pattern]] = [
+    ("hdfc", re.compile(r"\bHDFC\b", re.I)),
+    ("icici", re.compile(r"\bICICI\b", re.I)),
+    ("sbi", re.compile(r"STATE BANK OF INDIA|\bSBI\b|\bSBIN\b", re.I)),
+    ("axis", re.compile(r"\bAXIS BANK\b|\bUTIB\b", re.I)),
+    ("kotak", re.compile(r"\bKOTAK\b|\bKKBK\b", re.I)),
+    ("yes", re.compile(r"\bYES BANK\b|\bYESB\b", re.I)),
+    ("idfc", re.compile(r"\bIDFC\b", re.I)),
+    ("indusind", re.compile(r"\bINDUSIND\b|\bINDB\b", re.I)),
+    ("bob", re.compile(r"BANK OF BARODA|\bBARB\b", re.I)),
+    ("pnb", re.compile(r"PUNJAB NATIONAL BANK|\bPNB\b|\bPUNB\b", re.I)),
+    ("canara", re.compile(r"\bCANARA\b|\bCNRB\b", re.I)),
+    ("union", re.compile(r"UNION BANK OF INDIA|\bUBIN\b", re.I)),
+    ("boi", re.compile(r"BANK OF INDIA|\bBKID\b", re.I)),
+    ("indian", re.compile(r"\bINDIAN BANK\b|\bIDIB\b", re.I)),
+    ("iob", re.compile(r"INDIAN OVERSEAS BANK|\bIOBA\b", re.I)),
+    ("central", re.compile(r"CENTRAL BANK OF INDIA|\bCBIN\b", re.I)),
+    ("federal", re.compile(r"\bFEDERAL BANK\b|\bFDRL\b", re.I)),
+    ("hsbc", re.compile(r"\bHSBC\b", re.I)),
+    ("citi", re.compile(r"\bCITIBANK\b|\bCITI BANK\b", re.I)),
+    ("sc", re.compile(r"STANDARD CHARTERED|\bSCBL\b", re.I)),
+    ("dbs", re.compile(r"\bDBS\b", re.I)),
+    ("rbl", re.compile(r"\bRBL BANK\b|\bRATN\b", re.I)),
+    ("idbi", re.compile(r"\bIDBI\b|\bIBKL\b", re.I)),
+    ("au", re.compile(r"AU SMALL FINANCE|\bAUBL\b", re.I)),
+    ("bandhan", re.compile(r"\bBANDHAN\b|\bBDBL\b", re.I)),
+    ("karnataka", re.compile(r"KARNATAKA BANK|\bKARB\b", re.I)),
+    ("kvb", re.compile(r"KARUR VYSYA|\bKVBL\b", re.I)),
+    ("sib", re.compile(r"SOUTH INDIAN BANK|\bSIBL\b", re.I)),
+    ("tmb", re.compile(r"TAMILNAD MERCANTILE|\bTMBL\b", re.I)),
+    ("cub", re.compile(r"CITY UNION BANK|\bCIUB\b", re.I)),
+    ("saraswat", re.compile(r"\bSARASWAT\b", re.I)),
+]
+
+PDF_PASSWORD_HELP = ("This PDF needs a password — for HDFC it is your Customer ID, for ICICI/Axis your date of birth (DDMMYYYY)")
+
+
+def detect_bank(df: pd.DataFrame) -> str | None:
+    """Scan the first 40 rows (the statement preamble) for a bank name; returns a short key or None."""
+    lines = []
+    for i in range(min(40, len(df))):
+        lines.append(" ".join(str(v) for v in df.iloc[i].tolist() if not _is_blank(v)))
+    text = "\n".join(lines)
+    for key, rx in BANK_PATTERNS:
+        if rx.search(text):
+            return key
+    return None
+
 SYN = {
     "date": ["txn date", "transaction date", "tran date", "value date", "date", "posting date", "voucher date", "vch date", "bill date", "invoice date"],
     "desc": ["narration", "description", "transaction details", "transaction remarks", "remarks", "details", "particulars", "merchant", "party", "party name", "supplier", "vendor", "account name", "beneficiary", "name"],
@@ -151,7 +202,7 @@ def _date(v) -> date | None:
         return None
 
 
-def load_table(content: bytes, filename: str) -> pd.DataFrame:
+def load_table(content: bytes, filename: str, pdf_password: str | None = None) -> pd.DataFrame:
     name = filename.lower()
     if not content or not content.strip():
         raise ValueError("The file is empty.")
@@ -180,20 +231,48 @@ def load_table(content: bytes, filename: str) -> pd.DataFrame:
         rows = [[c if c.strip() != "" else None for c in r] + [None] * (width - len(r)) for r in rows]
         return pd.DataFrame(rows, dtype=object)
     if name.endswith(".pdf"):
-        return _pdf_table(content)
+        return _pdf_table(content, pdf_password)
     raise ValueError("Unsupported file type. Upload Excel (.xlsx/.xls), CSV, or PDF.")
 
 
-def _pdf_table(content: bytes) -> pd.DataFrame:
+def _is_password_error(e: BaseException) -> bool:
+    """pdfplumber wraps pdfminer's PDFPasswordIncorrect in PdfminerException(inner) — look at the wrapper, its
+    message, its args and its cause."""
+    seen = []
+    stack: list[BaseException] = [e]
+    while stack:
+        x = stack.pop()
+        if x in seen:
+            continue
+        seen.append(x)
+        for txt in (type(x).__name__, str(x), repr(x)):
+            t = txt.lower()
+            if "password" in t or "encrypt" in t or "decrypt" in t:
+                return True
+        stack += [a for a in getattr(x, "args", ()) if isinstance(a, BaseException)]
+        for link in (x.__cause__, x.__context__):
+            if link:
+                stack.append(link)
+    return False
+
+
+def _pdf_table(content: bytes, pdf_password: str | None = None) -> pd.DataFrame:
     try:
         import pdfplumber  # optional
     except ImportError as e:
         raise ValueError("PDF reading needs pdfplumber; upload the Excel/CSV version of the statement instead.") from e
     rows = []
-    with pdfplumber.open(io.BytesIO(content)) as pdf:
-        for page in pdf.pages:
-            for table in page.extract_tables() or []:
-                rows.extend(table)
+    try:
+        with pdfplumber.open(io.BytesIO(content), password=pdf_password or None) as pdf:
+            for page in pdf.pages:
+                for table in page.extract_tables() or []:
+                    rows.extend(table)
+    except ValueError:
+        raise
+    except Exception as e:  # noqa: BLE001 — pdfminer raises PDFPasswordIncorrect / PDFEncryptionError, pypdfium its own types
+        if _is_password_error(e):
+            raise ValueError(PDF_PASSWORD_HELP) from e
+        raise ValueError(f"Could not read this PDF ({type(e).__name__}). Upload the Excel/CSV version instead.") from e
     if not rows:
         raise ValueError("Could not find a table in this PDF. Upload the Excel/CSV version instead.")
     width = max(len(r) for r in rows)
@@ -201,9 +280,17 @@ def _pdf_table(content: bytes) -> pd.DataFrame:
     return pd.DataFrame(rows, dtype=object)
 
 
-def parse_rows(content: bytes, filename: str, source_kind: str) -> tuple[list[dict], str, int]:
+def parse_rows(content: bytes, filename: str, source_kind: str, pdf_password: str | None = None) -> tuple[list[dict], str, int]:
     """Returns (rows, detected_format, skipped)."""
-    df = load_table(content, filename)
+    rows, fmt, skipped, _bank = parse_rows_ex(content, filename, source_kind, pdf_password)
+    return rows, fmt, skipped
+
+
+def parse_rows_ex(content: bytes, filename: str, source_kind: str, pdf_password: str | None = None) -> tuple[list[dict], str, int, str | None]:
+    """Returns (rows, detected_format, skipped, bank) — bank is a short key ("hdfc", "icici", ...) found in the
+    statement preamble, or None."""
+    df = load_table(content, filename, pdf_password)
+    bank = detect_bank(df) if source_kind != "tally" else None
     h = _find_header(df)
     if h is None:
         raise ValueError("Could not find the header row (Date / Narration / Withdrawal or Amount). "
@@ -284,9 +371,13 @@ def parse_rows(content: bytes, filename: str, source_kind: str) -> tuple[list[di
             # In a Tally register the Debit/Credit columns are the ledger side (party is credited on a purchase),
             # not the cash direction. Money-in vouchers are credits; everything else is money out.
             direction = "credit" if ("credit note" in vtype or "receipt" in vtype) else "debit"
+        ref = _str(r.get(c_ref)) if c_ref else None
+        instrument = _instrument_from_text(desc)
+        if not instrument and ref and fmt != "tally_register" and _detect_mode(desc) == "cheque" and re.fullmatch(r"\d{3,8}", ref):
+            instrument = ref   # bank statements put the cheque number in the Chq/Ref column
         rows.append({
             "date": d, "amount": round(amount, 2), "direction": direction, "raw_description": desc[:1000],
-            "ref": _str(r.get(c_ref)) if c_ref else None,
+            "ref": ref, "instrument_no": instrument,
             "ledger": _str(r.get(c_ledger)) if c_ledger else None,
             "taxable": _money(r.get(c_tax)) if c_tax else None,
             "gst": _money(r.get(c_gst)) if c_gst else None,
@@ -298,7 +389,9 @@ def parse_rows(content: bytes, filename: str, source_kind: str) -> tuple[list[di
     for r in rows:
         for k in ("_vtype", "_party", "_ledgers", "_gst"):
             r.pop(k, None)
-    return rows, fmt, skipped
+        if fmt == "tally_register" and not r.get("instrument_no"):
+            r["instrument_no"] = _instrument_from_text(r["raw_description"])   # ledger lines may carry "Chq No: 000412"
+    return rows, fmt, skipped, bank
 
 
 _BOOK_LEDGER_RE = re.compile(r"\bBANK\b|\bCASH\b|\bA/C\b|\bCASH CREDIT\b|\bCURRENT ACCOUNT\b|\bPETTY CASH\b", re.I)

@@ -938,3 +938,261 @@ hr.sep {
 .month-head h2 {
   font-size: 15px;
 }
+
+/* ---- v2: auth pages ----------------------------------------------------- */
+
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 48px 16px;
+}
+.auth-card {
+  width: 100%;
+  max-width: 420px;
+}
+
+/* top bar: user chip, short name, sample badge */
+.brand-company {
+  font-weight: 500;
+  color: var(--text-2);
+}
+.sample-badge {
+  margin-left: 8px;
+  font-size: 11px;
+  vertical-align: middle;
+}
+.user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.user-name {
+  font-size: 13px;
+  color: var(--text-2);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .user-name {
+    display: none;
+  }
+  .brand-company {
+    display: none;
+  }
+}
+
+/* ---- v2: home ----------------------------------------------------------- */
+
+.banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--info-soft);
+  color: var(--info);
+  border: 1px solid #c5d6ee;
+}
+.breakdown .num {
+  color: var(--text-2);
+}
+/* Phone: attention banner → numbers → counters → next dues → the rest, so the
+   owner sees "N payments need an answer" and the month's number without scrolling. */
+@media (max-width: 720px) {
+  .home {
+    display: flex;
+    flex-direction: column;
+  }
+  .home > * {
+    order: 10;
+  }
+  .home > .page-head {
+    order: 0;
+  }
+  .home > .home-banner {
+    order: 1;
+  }
+  .home > .home-numbers {
+    order: 2;
+  }
+  .home > .home-counters {
+    order: 3;
+  }
+  .home > .home-dues {
+    display: contents;
+  }
+  .home-dues > .card {
+    order: 4;
+    margin-top: 16px;
+  }
+  .home-dues > .home-categories {
+    order: 10;
+  }
+}
+
+/* ---- v2: bulk bars / selection ----------------------------------------- */
+
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+}
+.field-inline {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 0 !important;
+}
+.field-inline > span {
+  margin-bottom: 0 !important;
+}
+.field-inline input {
+  width: auto;
+  max-width: 90px;
+}
+.field-inline input[type='date'] {
+  max-width: 160px;
+}
+th.col-check,
+td.col-check {
+  width: 32px;
+  padding-right: 4px;
+}
+td.col-check input,
+th.col-check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  cursor: pointer;
+}
+tbody tr.is-selected {
+  background: var(--accent-soft);
+}
+@media (max-width: 640px) {
+  .table-wrap.cards td.col-check {
+    justify-content: flex-start;
+  }
+  .table-wrap.cards td.col-check::before {
+    display: none;
+  }
+}
+.question.is-selected {
+  border-color: var(--accent);
+  background: #f7faff;
+}
+.question .row input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+/* split-into-several form on a bundle question */
+.split-form {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.split-row {
+  display: grid;
+  grid-template-columns: 1.1fr 1.6fr 110px auto;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+@media (max-width: 560px) {
+  .split-row {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* ---- v2: drawer details ------------------------------------------------- */
+
+.summary-line {
+  display: flex;
+  gap: 8px 18px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.details-toggle {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.details-toggle:hover {
+  color: var(--accent);
+}
+
+/* ---- v2: onboarding ----------------------------------------------------- */
+
+.steps {
+  margin: 12px 0 0;
+  padding-left: 22px;
+}
+.steps > li {
+  margin-bottom: 12px;
+}
+.steps > li:last-child {
+  margin-bottom: 0;
+}
+.bank-steps {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.bank-steps li {
+  margin-bottom: 3px;
+}
+kbd {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 1px 5px;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--surface);
+}
+
+/* ---- v2: settings ------------------------------------------------------- */
+
+.temp-pw {
+  font-size: 14px;
+  padding: 2px 6px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  user-select: all;
+}
+.danger-zone {
+  border-color: #e3a8a3;
+}
+input[type='password'],
+input[type='email'] {
+  width: 100%;
+  font: inherit;
+  padding: 7px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+}

@@ -18,8 +18,21 @@ services:
       dockerfile: backend/Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg2://ittracker:ittracker@db:5432/ittracker
-      SEED_SAMPLE: "1"
+      SEED_SAMPLE: ${SEED_SAMPLE:-1}
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
       APP_ACCESS_KEY: ${APP_ACCESS_KEY:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-0}
+      SCHEDULER: ${SCHEDULER:-1}
+      # WhatsApp (Meta Cloud API) — leave empty to log reminders as skipped_not_configured
+      WA_PHONE_NUMBER_ID: ${WA_PHONE_NUMBER_ID:-}
+      WA_TOKEN: ${WA_TOKEN:-}
+      WA_TEMPLATE_NAME: ${WA_TEMPLATE_NAME:-}
+      # Email (SMTP)
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
     ports:
       - "8000:8000"
     depends_on:

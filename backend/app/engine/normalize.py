@@ -112,11 +112,46 @@ def _segment_payee(raw: str) -> str | None:
     return None
 
 
+# Cheque / instrument numbers (rule 2.37): "CHQ 000412", "CHEQUE NO. 412", "Chq No: 000412", "Ch. No 000412",
+# "MICR 000412", Tally "Cheque 000412". The number is 3-8 digits (banks pad to 6).
+_INSTRUMENT_RE = re.compile(
+    r"\b(?:CHQ|CHEQUE|CHECK|CH|MICR|INSTRUMENT|INST)\b\.?\s*(?:NO|NUM|NUMBER|#)?\.?\s*[:#\-]?\s*(\d{3,8})\b", re.I)
+_BARE_CHEQUE_RE = re.compile(r"^\s*(?:CHQ|CHEQUE|CLG|MICR)(?:\s+(?:PAID|NO\.?|NUMBER|#))?\s*[:#\-]?\s*(\d{3,8})\s*$", re.I)
+
+
+def instrument_no(raw: str) -> str | None:
+    """Cheque / instrument number from a narration, or None. For cheque-mode bank lines that carry the number
+    only as a trailing token ("CHQ PAID-MICR CTS-ABC COMPUTERS-000412") the last 6-digit token is taken."""
+    if not raw:
+        return None
+    m = _INSTRUMENT_RE.search(raw)
+    if m:
+        return m.group(1)
+    if detect_mode(raw) == "cheque":
+        toks = re.findall(r"(?<![\dX])\d{6}(?![\dX])", raw)
+        if toks:
+            return toks[-1]
+    return None
+
+
+def same_instrument(a: str | None, b: str | None) -> bool:
+    """Compare the last 6 digits, leading zeros ignored ("000412" == "412" == "CHQ412")."""
+    if not a or not b:
+        return False
+    da = re.sub(r"\D", "", a)[-6:].lstrip("0")
+    db = re.sub(r"\D", "", b)[-6:].lstrip("0")
+    return bool(da) and da == db
+
+
 def clean_payee(raw: str) -> str:
     """Uppercase, strip prefixes, ids, dates, card fragments, legal/city suffixes, collapse spaces."""
     if not raw:
         return ""
     s = raw.strip()
+    # a bare cheque line has no payee: keep the instrument number so Tally can supply the party (2.37)
+    m = _BARE_CHEQUE_RE.match(s)
+    if m:
+        return f"CHQ {m.group(1)}"
     # Tally-style "Party | narration": the party is the payee
     if "|" in s and not _SEGMENT_MODES.match(s):
         s = s.split("|", 1)[0].strip()
@@ -139,6 +174,10 @@ def clean_payee(raw: str) -> str:
     s = _SUFFIX_RE.sub(" ", s)
     s = re.sub(r"[^A-Z0-9*.&@ ]+", " ", s)
     s = re.sub(r"\s+", " ", s).strip(" .-")
+    if s in ("", "CHQ", "CHEQUE", "CLG", "MICR", "CHQ PAID", "MICR CTS", "CTS", "CHQ PAID MICR CTS"):
+        n = instrument_no(raw)
+        if n:
+            return f"CHQ {n}"
     return s
 
 

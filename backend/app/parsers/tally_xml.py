@@ -4,6 +4,8 @@ import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
+from app.engine.normalize import instrument_no as _instrument_from_text
+
 
 _BOOK_LEDGER_RE = re.compile(r"\bBANK\b|\bCASH\b|\bA/C\b|\bCASH CREDIT\b|\bCURRENT ACCOUNT\b|\bPETTY CASH\b", re.I)
 
@@ -34,6 +36,14 @@ def parse_tally_xml(content: bytes) -> tuple[list[dict], str, int]:
         party = _text(v, "PARTYLEDGERNAME") or _text(v, "PARTYNAME")
         narration = _text(v, "NARRATION")
         vno = _text(v, "VOUCHERNUMBER")
+        # cheque number: Bank Allocations (<BANKALLOCATIONS.LIST><INSTRUMENTNUMBER>) or the narration ("Chq No: 000412")
+        instrument = None
+        for ba in v.iter("BANKALLOCATIONS.LIST"):
+            n = _text(ba, "INSTRUMENTNUMBER") or _text(ba, "CHEQUENUMBER")
+            if n and re.search(r"\d{3,}", n):
+                instrument = re.sub(r"\D", "", n)
+                break
+        instrument = instrument or _instrument_from_text(narration)
         ledgers, amount, expense_ledger = [], 0.0, None
         for le in list(v.iter("ALLLEDGERENTRIES.LIST")) + list(v.iter("LEDGERENTRIES.LIST")):
             name = _text(le, "LEDGERNAME")
@@ -66,7 +76,8 @@ def parse_tally_xml(content: bytes) -> tuple[list[dict], str, int]:
         rows.append({
             "date": dt, "amount": round(amount, 2), "direction": "credit" if "credit note" in vtype else "debit",
             "raw_description": f"{party} | {narration}".strip(" |"), "ref": vno or None, "ledger": expense_ledger,
-            "taxable": taxable, "gst": gst or None, "fx_amount": None, "_vtype": vtype, "_party": party.upper(),
+            "taxable": taxable, "gst": gst or None, "fx_amount": None, "instrument_no": instrument,
+            "_vtype": vtype, "_party": party.upper(),
         })
     # A payment voucher that settles a purchase voucher is the same bill twice: the purchase carries the invoice
     # (amount, GST, narration); the bank statement carries the cash. Keep payment vouchers only for parties

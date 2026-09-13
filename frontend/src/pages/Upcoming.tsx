@@ -85,7 +85,7 @@ export default function Upcoming() {
                     <th>Due</th>
                     <th>Vendor</th>
                     <th>Product</th>
-                    <th>Cycle</th>
+                    <th>How often</th>
                     <th className="right">Amount</th>
                     <th>Status</th>
                     <th>Paid from</th>
@@ -111,7 +111,7 @@ export default function Upcoming() {
                           </Link>
                         </td>
                         <td data-label="Product">{it.product ?? <span className="muted">—</span>}</td>
-                        <td className="cell-minor" data-label="Cycle">{CYCLE_LABEL[it.cycle] ?? it.cycle}</td>
+                        <td className="cell-minor" data-label="How often">{CYCLE_LABEL[it.cycle] ?? it.cycle}</td>
                         <td className="right num" data-label="Amount">{rupees(it.expected_amount ?? it.avg_amount)}</td>
                         <td data-label="Status">
                           <StatusPill status={it.status} />

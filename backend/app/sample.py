@@ -95,6 +95,8 @@ def _bank_rows(today: date) -> list[dict]:
     # Unknown yearly to a local firm (question)
     add(today - relativedelta(months=17), "NEFT-SRI BALAJI ENTERPRISES-BILL 118", 11800, ref="B118")
     add(today - relativedelta(months=5), "NEFT-SRI BALAJI ENTERPRISES-BILL 231", 11800, ref="B231")
+    # Reseller bill with no product hint (asks "what is this?" with a split option)
+    add(today - relativedelta(months=2), "NEFT-N0000009-REDINGTON LIMITED-INV 4471", 35400, ref="N0000009")
     # Auth charge then subscription (Canva yearly) – 2 hits
     add(today - relativedelta(months=15), "POS 4XXXXX CANVA* I03X SYDNEY", 2)
     add(today - relativedelta(months=15) + timedelta(days=3), "POS 4XXXXX CANVA* I03X SYDNEY", 3999)
@@ -149,14 +151,26 @@ def write_sample_files(today: date | None = None) -> tuple[Path, Path]:
     return bank, tally
 
 
-def seed_sample_if_empty(db: Session, today: date | None = None):
+DEMO_EMAIL, DEMO_PASSWORD = "demo@ittracker.local", "demo1234"
+
+
+def seed_sample_if_empty(db: Session, today: date | None = None) -> bool:
+    """Creates the demo user + sample company on an empty database. Returns True if it did."""
     if db.execute(select(m.Company.id)).first():
-        return
+        return False
+    from app.auth import hash_password
     today = today or date.today()
     bank, tally = write_sample_files(today)
-    c = m.Company(name="Sri Venkateswara Precision Engineering Pvt Ltd (sample)", gstin="36AAACS1234A1Z5")
+    c = m.Company(name="Sri Venkateswara Precision Engineering Pvt Ltd (sample)", gstin="36AAACS1234A1Z5", short_name="SVPE (sample)",
+                  owner_email=DEMO_EMAIL)
     db.add(c)
     db.flush()
+    u = db.execute(select(m.User).where(m.User.email == DEMO_EMAIL)).scalar_one_or_none()
+    if not u:
+        u = m.User(name="Demo user", email=DEMO_EMAIL, password_hash=hash_password(DEMO_PASSWORD))
+        db.add(u)
+        db.flush()
+    db.add(m.Membership(user_id=u.id, company_id=c.id, role="owner"))
     for path, kind, label in ((bank, "bank", "HDFC Current A/c"), (tally, "tally", "Tally purchase register")):
         acc = m.Account(company_id=c.id, label=label, kind="bank" if kind == "bank" else "tally", bank_name="HDFC" if kind == "bank" else None)
         db.add(acc)
@@ -169,3 +183,4 @@ def seed_sample_if_empty(db: Session, today: date | None = None):
         batch.rows_imported, batch.rows_skipped, batch.detected_format = added, skipped + dup, fmt
     db.commit()
     runner.run_engine(db, c.id, today)
+    return True

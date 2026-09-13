@@ -74,3 +74,8 @@ Answering a `vendor` question with a product creates a customer-scoped alias so 
 
 ## Errors
 `{detail: "plain English message"}` with 4xx.
+
+## v2 additions
+Auth (users / roles / cookie sessions), company settings + delete, hidden-payee undo, reminders (WhatsApp / email),
+owner share text, Excel export, FY view, bulk answers, `bundle` questions, upload extras and the audit log are specified in
+[API-v2-additions.md](API-v2-additions.md). All routes above now require a login (or the `X-Access-Key` header).

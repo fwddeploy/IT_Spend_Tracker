@@ -5,6 +5,8 @@ from pathlib import Path
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///" + os.path.join(tempfile.mkdtemp(), "test.db"))
 os.environ["SEED_SAMPLE"] = "0"
+os.environ["SCHEDULER"] = "0"
+os.environ["SECRET_KEY"] = "test-secret"
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -14,7 +16,10 @@ from app.sample import write_sample_files  # noqa: E402
 
 @pytest.fixture(scope="module")
 def client():
+    """Logged-in client (cookie session). The header alternative is covered in test_auth.py."""
     with TestClient(app) as c:
+        r = c.post("/api/auth/register", json={"name": "Tester", "email": "tester@example.com", "password": "secret123", "company_name": "Tester Co"})
+        assert r.status_code == 200, r.text
         yield c
 
 
@@ -81,7 +86,7 @@ def test_full_flow(client, files):
     # mark paid on an engine stream rolls the due date
     tss = next(s for s in streams if s["product"] == "TSS renewal")
     r = client.post(f"/api/companies/{cid}/streams/{tss['id']}/mark-paid", json={"date": "2027-04-09"})
-    assert r.status_code == 200 and r.json()["next_due"] == "2028-04-09"
+    assert r.status_code == 200 and r.json()["next_due"] == "2028-04-08"  # keeps the usual due day
 
     # manual add
     r = client.post(f"/api/companies/{cid}/streams", json={"vendor_name": "Keka HR", "category": "hr", "cycle": "monthly", "expected_amount": 4500, "last_paid_date": "2026-09-01"})
@@ -107,7 +112,7 @@ def test_mark_paid_keeps_cycle_and_later_payment_moves_due(client, files):
     sw = next(s for s in client.get(f"/api/companies/{cid}/streams").json() if s["vendor_name"].startswith("SolidWorks"))
     before_meq = sw["monthly_equivalent"]
     r = client.post(f"/api/companies/{cid}/streams/{sw['id']}/mark-paid", json={"date": "2026-09-13"}).json()
-    assert r["cycle"] == "yearly" and r["monthly_equivalent"] == before_meq and r["next_due"] == "2027-09-13"
+    assert r["cycle"] == "yearly" and r["monthly_equivalent"] == before_meq and r["next_due"] == "2028-03-20"  # paid early: keeps the March anchor
     assert r["paid_from"], "paid_from must survive a mark-paid re-run"
     # a note edit must not silently confirm / change anything else
     r2 = client.patch(f"/api/companies/{cid}/streams/{sw['id']}", json={"notes": "check with Cadspro"}).json()

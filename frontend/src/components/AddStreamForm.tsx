@@ -116,7 +116,7 @@ export default function AddStreamForm({ companyId, categories, onCreated, onCanc
           </select>
         </label>
         <label className="field">
-          <span>Billing cycle *</span>
+          <span>How often *</span>
           <select value={f.cycle} onChange={(e) => setF({ ...f, cycle: e.target.value as Cycle })}>
             {CYCLES.map((c) => (
               <option key={c} value={c}>

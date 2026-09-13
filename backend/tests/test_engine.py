@@ -111,7 +111,8 @@ def test_case4_5_tally_tss_yearly(cat):
             row(cat, "NEFT-N3-TALLY SOLUTIONS PVT LTD-TSS", date(2026, 4, 15), 5310)]
     _, s = run(cat, rows)
     st = one(s, "tally")
-    assert st.cycle == "yearly" and st.next_due == date(2027, 4, 15) and st.confidence >= 75
+    # 2.19: with 3 payments the due date snaps to the median day-of-year (10 Apr, 8 Apr, 15 Apr -> 10 Apr)
+    assert st.cycle == "yearly" and st.next_due == date(2027, 4, 10) and st.confidence >= 75
     # single hit with fingerprint -> yearly candidate, no vendor question
     _, s2 = run(cat, [row(cat, "NEFT-N3-TALLY SOLUTIONS-TSS", date(2026, 4, 15), 5310)])
     st2 = one(s2, "tally")
@@ -157,10 +158,17 @@ def test_case16_aws_variable(cat):
 
 
 def test_case17_prepaid_credits(cat):
-    rows = [row(cat, "UPI/1/walkoverwebsolutions@ybl/MSG91", date(2026, 1, 12) + timedelta(days=k), 5000) for k in (0, 49, 75, 138)]
+    # 4 top-ups of Rs 5,000 in the 6 months before today (12-Sep-2026): run-rate = 20,000 / 6 ≈ 3,333 (2.15)
+    rows = [row(cat, "UPI/1/walkoverwebsolutions@ybl/MSG91", date(2026, 3, 20) + timedelta(days=k), 5000) for k in (0, 49, 75, 138)]
     _, s = run(cat, rows)
     st = one(s, "sms_gateway")
     assert st.stream_type == "prepaid" and st.next_due is None
+    assert st.expected_amount == round(20000 / 6, 2) and st.last_amount == 5000
+    assert any(f.startswith("topup_every_") for f in st.flags)
+    # only the last two top-ups inside the window -> 10,000 / 6
+    rows = [row(cat, "UPI/1/walkoverwebsolutions@ybl/MSG91", date(2026, 1, 12) + timedelta(days=k), 5000) for k in (0, 49, 75, 138)]
+    _, s = run(cat, rows)
+    assert one(s, "sms_gateway").expected_amount == round(10000 / 6, 2)
 
 
 def test_case18_19_domain_biennial(cat):
@@ -230,7 +238,11 @@ def test_case31_supplier_switch_merges(cat):
     rows += monthly(cat, "POS MSFT * E0100ABCD", 1475, date(2025, 3, 3), 6)
     _, s = run(cat, rows)
     m365 = [x for x in s if x.vendor_key == "microsoft365"]
-    assert len(m365) == 2  # two products/cycles: yearly via reseller (old) + monthly direct — both attributed to M365
+    # 2.27: reseller yearly (Rs 17,700 = 1,475/month) stops within a cycle of the direct monthly (Rs 1,475) starting -> ONE stream
+    assert len(m365) == 1
+    st = m365[0]
+    assert "supplier_changed" in st.flags and st.supplier_history == ["ABC INFOTECH", "MSFT * E0100ABCD"]
+    assert st.cycle == "monthly" and st.expected_amount == 1475 and len(st.occurrences) == 8 and st.first_seen == date(2023, 3, 1)
 
 
 def test_case32_33_three_sources_one_occurrence(cat):

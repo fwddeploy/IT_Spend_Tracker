@@ -1,21 +1,58 @@
-import { Link } from 'react-router-dom'
-import { getDashboard } from '../lib/api'
+import { useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { exportUrl, getDashboard, getShareText, listQuestions } from '../lib/api'
 import { useCompany } from '../lib/company'
-import { useFetch } from '../lib/useFetch'
+import { useFetch, errorText } from '../lib/useFetch'
 import { useDataChanged } from '../lib/events'
-import { fmtDate, fmtDateTime, fmtMonth, rupees, shortMonth, humanize } from '../lib/format'
+import { fmtDate, fmtDateTime, fmtMonth, rupees, shortMonth, humanize, sourceLabel } from '../lib/format'
 import { ErrorMsg, Loading, NoCompany, StatusPill, Empty } from '../components/ui'
+
+/** Financial year that contains today, given the month it starts in (1–12). */
+function currentFY(fyStartMonth: number): number {
+  const now = new Date()
+  return now.getMonth() + 1 >= fyStartMonth ? now.getFullYear() : now.getFullYear() - 1
+}
 
 export default function Home() {
   const { companyId, company } = useCompany()
-  const dash = useFetch(() => getDashboard(companyId as number), [companyId], companyId !== null)
+  const [params, setParams] = useSearchParams()
+  const view = params.get('view') === 'fy' ? 'fy' : 'month'
+  const fy = view === 'fy' ? currentFY(company?.fy_start_month ?? 4) : undefined
+  const dash = useFetch(
+    () => getDashboard(companyId as number, fy ? { fy } : {}),
+    [companyId, fy],
+    companyId !== null,
+  )
   useDataChanged(dash.reload)
+  const questions = useFetch(() => listQuestions(companyId as number, true), [companyId], companyId !== null)
+  useDataChanged(questions.reload)
+  const openQ = questions.data?.length ?? 0
+
+  const [sharing, setSharing] = useState(false)
+  const [shareErr, setShareErr] = useState<string | null>(null)
+  async function share() {
+    if (companyId === null) return
+    setSharing(true)
+    setShareErr(null)
+    try {
+      const { text } = await getShareText(companyId)
+      window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer')
+    } catch (e) {
+      setShareErr(errorText(e))
+    } finally {
+      setSharing(false)
+    }
+  }
 
   if (companyId === null) return <NoCompany />
-  if (dash.loading && !dash.data) return <Loading text="Loading dashboard…" />
+  if (dash.loading && !dash.data) return <Loading text="Loading…" />
   if (dash.error) return <ErrorMsg>{dash.error}</ErrorMsg>
   const d = dash.data
   if (!d) return null
+  const isFY = view === 'fy' && (d.period || d.cash_out_period != null)
+  const headline = isFY ? (d.cash_out_period ?? d.cash_out_month) : d.cash_out_month
+  const periodLabel = isFY ? d.period ?? `FY ${fy}` : fmtMonth(d.month)
+  const cb = d.cash_breakdown
 
   const maxCat = Math.max(1, ...d.by_category.map((c) => c.monthly_equivalent))
   const maxCal = Math.max(1, ...d.calendar.map((m) => m.cash_out))
@@ -24,36 +61,80 @@ export default function Home() {
     : 0
 
   return (
-    <div className="stack">
+    <div className="stack home">
       <div className="page-head">
         <div>
           <h1>{company?.name}</h1>
-          <p>Software and licence spend for {fmtMonth(d.month)}</p>
+          <p>Software and licence spend for {periodLabel}</p>
         </div>
-        <button className="btn btn-sm" onClick={dash.reload} disabled={dash.loading}>
-          Refresh
-        </button>
-      </div>
-
-      <div className="grid-2">
-        <div className="card">
-          <div className="bignum-label">Going out this month</div>
-          <div className="bignum num">{rupees(d.cash_out_month)}</div>
-          <div className="bignum-hint">
-            Actual payments due or paid in {fmtMonth(d.month)}.
+        <div className="row">
+          <div className="seg" role="group" aria-label="Period">
+            <button
+              className={view === 'month' ? 'on' : ''}
+              onClick={() => setParams({}, { replace: true })}
+            >
+              Month
+            </button>
+            <button
+              className={view === 'fy' ? 'on' : ''}
+              onClick={() => setParams({ view: 'fy' }, { replace: true })}
+            >
+              FY
+            </button>
           </div>
+          <button className="btn btn-sm" onClick={share} disabled={sharing} title="Opens WhatsApp with a short summary">
+            {sharing ? 'Preparing…' : 'Share on WhatsApp'}
+          </button>
+          <a className="btn btn-sm" href={exportUrl(companyId)} download>
+            Export Excel
+          </a>
+          <button className="btn btn-sm" onClick={dash.reload} disabled={dash.loading}>
+            Refresh
+          </button>
+        </div>
+      </div>
+      {shareErr && <ErrorMsg>{shareErr}</ErrorMsg>}
+
+      {openQ > 0 && (
+        <div className="banner home-banner">
+          <span>
+            <strong>{openQ}</strong> payment{openQ === 1 ? '' : 's'} need{openQ === 1 ? 's' : ''} a quick answer
+          </span>
+          <Link to="/attention" className="btn btn-sm btn-primary">
+            Answer →
+          </Link>
+        </div>
+      )}
+
+      <div className="grid-2 home-numbers">
+        <div className="card">
+          <div className="bignum-label">{isFY ? `Going out in ${periodLabel}` : 'Going out this month'}</div>
+          <div className="bignum num">{rupees(headline)}</div>
+          {cb ? (
+            <div className="bignum-hint breakdown">
+              Paid so far <span className="num">{rupees(cb.paid)}</span> · Still due{' '}
+              <span className="num">{rupees(cb.still_due)}</span>
+              {cb.estimate > 0 ? (
+                <>
+                  {' '}· Estimate for pay-as-you-go <span className="num">{rupees(cb.estimate)}</span>
+                </>
+              ) : null}
+            </div>
+          ) : (
+            <div className="bignum-hint">Actual payments due or paid in {periodLabel}.</div>
+          )}
         </div>
         <div className="card">
-          <div className="bignum-label">Monthly-equivalent</div>
+          <div className="bignum-label">Per month</div>
           <div className="bignum num">{rupees(d.monthly_equivalent)}</div>
           <div className="bignum-hint">
-            Every licence spread evenly: yearly ÷ 12, quarterly ÷ 3, and so on. Annualised{' '}
+            Every licence spread evenly: yearly ÷ 12, quarterly ÷ 3, and so on. Per year{' '}
             <span className="num">{rupees(d.annualised)}</span>.
           </div>
         </div>
       </div>
 
-      <div className="grid-4">
+      <div className="grid-4 home-counters">
         <Link to="/lines?status=active" className="counter">
           <div className="counter-value num">{d.active_count}</div>
           <div className="counter-label">Active licences</div>
@@ -68,11 +149,11 @@ export default function Home() {
         </Link>
         <Link to="/attention" className="counter is-info">
           <div className="counter-value num">{d.needs_confirm_count}</div>
-          <div className="counter-label">Needs confirm</div>
+          <div className="counter-label">To check</div>
         </Link>
       </div>
 
-      <div className="grid-2">
+      <div className="grid-2 home-dues">
         <div className="card">
           <div className="card-title">Next 5 dues</div>
           {d.next_dues.length === 0 ? (
@@ -99,8 +180,8 @@ export default function Home() {
           )}
         </div>
 
-        <div className="card">
-          <div className="card-title">By category (monthly-equivalent)</div>
+        <div className="card home-categories">
+          <div className="card-title">By category (per month)</div>
           {d.by_category.length === 0 ? (
             <Empty title="No categories yet" />
           ) : (
@@ -132,8 +213,8 @@ export default function Home() {
         </div>
       </div>
 
-      <div className="card">
-        <div className="card-title">Cash-out by month (next 12 months)</div>
+      <div className="card home-calendar">
+        <div className="card-title">{isFY ? `Cash-out by month (${periodLabel})` : 'Cash-out by month (next 12 months)'}</div>
         {d.calendar.length === 0 ? (
           <Empty title="No calendar data" />
         ) : (
@@ -176,10 +257,10 @@ export default function Home() {
         )}
       </div>
 
-      <div className="card">
-        <div className="card-title">Sync health</div>
+      <div className="card home-sync">
+        <div className="card-title">Statements on file</div>
         {d.sync_health.length === 0 ? (
-          <Empty title="No data sources yet">
+          <Empty title="No statements yet">
             <Link to="/upload">Upload a bank or card statement</Link> to get started.
           </Empty>
         ) : (
@@ -187,7 +268,7 @@ export default function Home() {
             <div key={`${s.account_label}-${s.source_kind}`} className="sync-item">
               <div className="row">
                 <strong>{s.account_label}</strong>
-                <span className="tag">{s.source_kind}</span>
+                <span className="tag">{sourceLabel(s.source_kind)}</span>
                 {s.stale && <span className="pill pill-amber">Stale — upload a newer statement</span>}
               </div>
               <div className="secondary">

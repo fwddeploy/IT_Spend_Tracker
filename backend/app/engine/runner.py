@@ -2,10 +2,12 @@
 User edits live in Stream.user_fields and are never overwritten by a re-run."""
 from __future__ import annotations
 import hashlib
+import logging
+import threading
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 from dateutil.relativedelta import relativedelta
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, text as sa_text
 from sqlalchemy.orm import Session
 
 from app import models as m
@@ -14,6 +16,21 @@ from app.engine.normalize import clean_payee, detect_mode
 from app.engine.dedupe import Row, build_occurrences
 from app.engine.recurrence import build_streams, CYCLE_MONTHS
 from app.engine.status import compute_status
+
+log = logging.getLogger("ittracker.engine")
+
+# one engine run per company at a time (in-process); on Postgres also a transaction-scoped advisory lock
+_locks: dict[int, threading.Lock] = {}
+_locks_guard = threading.Lock()
+
+
+def company_lock(company_id: int) -> threading.Lock:
+    with _locks_guard:
+        lk = _locks.get(company_id)
+        if lk is None:
+            lk = _locks[company_id] = threading.Lock()
+        return lk
+
 
 def today_ist() -> date:
     """The customer is in India; the server may not be."""
@@ -90,6 +107,16 @@ def _load_learned(db: Session, catalog: Catalog):
 
 
 def run_engine(db: Session, company_id: int, today: date | None = None) -> dict:
+    with company_lock(company_id):
+        if db.bind is not None and db.bind.dialect.name == "postgresql":
+            db.execute(sa_text("SELECT pg_advisory_xact_lock(:cid)"), {"cid": company_id})
+        summary = _run_engine(db, company_id, today)
+    log.info("engine run company_id=%s occurrences=%s streams=%s questions_open=%s", company_id,
+             summary["occurrences"], summary["streams"], summary["questions_open"])
+    return summary
+
+
+def _run_engine(db: Session, company_id: int, today: date | None = None) -> dict:
     today = today or today_ist()
     catalog = get_catalog()
     _load_learned(db, catalog)
@@ -136,6 +163,7 @@ def run_engine(db: Session, company_id: int, today: date | None = None) -> dict:
             first_seen=sr.first_seen, last_paid_date=sr.last_paid_date, next_due=sr.next_due, anchor_day=sr.anchor_day,
             confidence=sr.confidence, auto_renew=sr.auto_renew, paid_from=sr.paid_from, flags=sr.flags,
             amount_history=sr.amount_history, occurrences_count=len(sr.occurrences), sources=sr.sources,
+            extra={k: getattr(sr, k) for k in ("rcm_gst", "quantity", "unit_price", "change_note", "supplier_history") if getattr(sr, k, None) not in (None, [])},
         )
         for k, v in engine_vals.items():
             if k in uf:
@@ -214,8 +242,26 @@ def _make_questions(db: Session, company_id: int, results, catalog: Catalog, tod
         yearly_value = amt * (12 / sr.cycle_months) if sr.cycle_months else amt
         ctx = {"payee": sr.payee_name, "amount": amt, "dates": dates, "cycle_guess": sr.cycle, "sources": sr.sources}
         # 1. unknown vendor
+        res0 = sr.occurrences[0].res if sr.occurrences else None
+        # 1b. known reseller, product unknown, big bill -> which product(s) is this? (maybe several in one bill)
+        fp = catalog.fingerprint(amt) if amt else None
+        is_bundle = getattr(sr, "needs_bundle", False) or (
+            sr.needs_vendor and res0 is not None and res0.is_reseller and not sr.product and amt >= 5000 and bool(res0.candidates or fp))
+        if is_bundle and res0 is not None:
+            key = f"bundle|{sr.payee_name}"
+            opts = []
+            for c in res0.candidates:
+                v = catalog.vendor(c)
+                opts.append({"key": f"v:{c}:", "label": v.name if v else c})
+            if fp and fp.get("vendor") and not any(o["key"].startswith(f"v:{fp['vendor']}:") for o in opts):
+                v = catalog.vendor(fp["vendor"])
+                opts.append({"key": f"v:{fp['vendor']}:{fp.get('product') or ''}", "label": f"{v.name if v else fp['vendor']} ({fp.get('product') or 'list price match'})"})
+            opts.append({"key": "split", "label": "Split into several"})
+            wanted[key] = dict(kind="bundle", prompt=f"{_fmt_money(amt)} paid to reseller \"{sr.payee_name}\" on {dates[-1]} — which product is this? (or split it if the bill covers several)",
+                               context={**ctx, "candidates": list(res0.candidates)}, options=opts, stream_id=st.id)
+            continue
         if sr.needs_vendor:
-            looks_it = sr.occurrences[0].res.looks_it if sr.occurrences[0].res else False
+            looks_it = res0.looks_it if res0 else False
             if yearly_value >= 5000 or looks_it or len(sr.occurrences) >= 2:
                 key = f"vendor|{sr.payee_name}"
                 opts = list(GENERIC_VENDOR_OPTIONS)
@@ -241,9 +287,6 @@ def _make_questions(db: Session, company_id: int, results, catalog: Catalog, tod
                                                      {"key": "still_active", "label": "Still using — remind me"},
                                                      {"key": "paid_elsewhere", "label": "Paid from another account (add it later)"}],
                                stream_id=st.id)
-        # 4. reseller bundle: known reseller, product unknown, big amount
-        if sr.vendor_key is None and False:
-            pass
     open_count = 0
     for key, spec in wanted.items():
         q = existing.get(key)
@@ -262,11 +305,55 @@ def _make_questions(db: Session, company_id: int, results, catalog: Catalog, tod
     return open_count
 
 
-def answer_question(db: Session, q: m.Question, choice: str, text: str | None = None) -> m.Stream | None:
+def answer_question(db: Session, q: m.Question, choice: str, text: str | None = None, items: list[dict] | None = None,
+                    run: bool = True) -> m.Stream | None:
+    """Apply one answer. `run=False` defers the engine re-run (bulk answers run it once at the end)."""
     catalog = get_catalog()
     key2id, _ = _vendor_ids(db)
     st = db.get(m.Stream, q.stream_id) if q.stream_id else None
     payee = (q.context or {}).get("payee") or (st.payee_name if st else None)
+    if q.kind == "bundle":
+        if choice == "split":
+            for it in items or []:
+                vk = it.get("vendor_key") or ""
+                name = it.get("product") or (catalog.vendor(vk).name if catalog.vendor(vk) else vk) or "Software"
+                vinfo = catalog.vendor(vk)
+                vname = vinfo.name if vinfo else (it.get("vendor_name") or name)
+                months = CYCLE_MONTHS.get((vinfo.default_cycle if vinfo else "yearly") or "yearly")
+                last = st.last_paid_date if st else None
+                ms = m.Stream(company_id=q.company_id, stream_key="manual|pending", vendor_id=key2id.get(vk), vendor_name=vname[:120],
+                              payee_name=payee, product=it.get("product"), category=(vinfo.category if vinfo else "other"),
+                              stream_type="subscription", cycle=(vinfo.default_cycle if vinfo and months else "yearly") if months else "irregular",
+                              cycle_months=months, expected_amount=float(it.get("amount") or 0), avg_amount=float(it.get("amount") or 0),
+                              last_amount=float(it.get("amount") or 0), first_seen=last, last_paid_date=last,
+                              next_due=(last + relativedelta(months=int(months))) if last and months else None, confidence=100,
+                              paid_from=st.paid_from if st else None, is_user_modified=True,
+                              user_fields={"manual": True, "split_from": st.id if st else None}, sources=["manual"],
+                              occurrences_count=1 if last else 0, flags=["split_from_bundle"])
+                db.add(ms)
+                db.flush()
+                ms.stream_key = f"manual|{ms.id}"
+                ms.status = compute_status(stream_type=ms.stream_type, cycle=ms.cycle, cycle_months=ms.cycle_months, next_due=ms.next_due,
+                                           last_paid_date=ms.last_paid_date, auto_renew=False, confidence=100, is_user_modified=True,
+                                           dismissed=False, cancelled=False)
+            if st:
+                st.dismissed, st.is_user_modified = True, True
+                st.user_fields = {**(st.user_fields or {}), "dismissed": True, "split": True}
+                st.status = "dismissed"
+            q.answered, q.answer = True, "split"
+            db.commit()
+            return st
+        if choice.startswith("v:"):
+            _, vk, product = choice.split(":", 2)
+            vk = vk if vk in key2id else _ensure_vendor(db, vk, catalog, key2id)
+            _learn(db, q.company_id, payee, key2id[vk], product or (text or None))
+        q.answered, q.answer = True, choice if not text else f"{choice}:{text}"
+        db.flush()
+        if run:
+            run_engine(db, q.company_id)
+        else:
+            db.commit()
+        return db.get(m.Stream, q.stream_id) if q.stream_id else None
     if q.kind == "vendor":
         if choice == "not_it":
             _learn(db, q.company_id, payee, key2id["not_it"], None)
@@ -282,7 +369,10 @@ def answer_question(db: Session, q: m.Question, choice: str, text: str | None = 
             _learn(db, q.company_id, payee, key2id[vk], product or None)
         q.answered, q.answer = True, choice if not text else f"{choice}:{text}"
         db.flush()
-        run_engine(db, q.company_id)
+        if run:
+            run_engine(db, q.company_id)
+        else:
+            db.commit()
         return db.get(m.Stream, q.stream_id) if q.stream_id else None
     if q.kind == "cycle" and st:
         uf = dict(st.user_fields or {})

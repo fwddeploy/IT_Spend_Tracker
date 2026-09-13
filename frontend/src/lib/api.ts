@@ -1,4 +1,4 @@
-// Typed client for the IT Tracker API (docs/API.md, v1).
+// Typed client for the IT Tracker API (docs/API.md v1 + docs/API-v2-additions.md).
 // Base URL is /api; in dev Vite proxies it to http://localhost:8000.
 
 export type SourceKind = 'bank' | 'card' | 'tally' | 'generic'
@@ -56,6 +56,8 @@ export interface Company {
   gstin: string | null
   fy_start_month: number
   created_at: string
+  /** Not in the v1 contract; the settings route is the source of truth. */
+  short_name?: string | null
 }
 
 export interface ImportBatch {
@@ -90,6 +92,10 @@ export interface Account {
 export interface UploadResult {
   batch: ImportBatch
   engine: EngineSummary
+  /** v2: e.g. "HDFC", "ICICI" when recognisable from the header rows. */
+  detected_bank?: string | null
+  /** v2: set when 0 rows were imported ("This statement was already uploaded"). */
+  hint?: string | null
 }
 
 export interface StreamOut {
@@ -121,6 +127,19 @@ export interface StreamOut {
   sources: StreamSource[]
   first_seen: string | null
   flags: string[]
+  // v2 additions (optional so the UI also works against a v1 backend)
+  /** 18% of expected for foreign no-GST vendors (reverse charge), else null. */
+  rcm_gst?: number | null
+  quantity?: number | null
+  unit_price?: number | null
+  /** FY of the last occurrence's service period, e.g. "2026-27". */
+  fy?: string | null
+  /** Plain-English versions of `flags`. */
+  flags_human?: string[]
+  /** Payees seen over time when the supplier changed. */
+  supplier_history?: string[]
+  /** Set by the backend when it changed something the user should know about. */
+  change_note?: string | null
 }
 
 export interface Occurrence {
@@ -210,9 +229,19 @@ export interface SyncHealth {
   stale: boolean
 }
 
+export interface CashBreakdown {
+  paid: number
+  still_due: number
+  estimate: number
+}
+
 export interface Dashboard {
   month: string
   cash_out_month: number
+  cash_breakdown?: CashBreakdown | null
+  /** FY view (`?fy=`): "FY 2026-27" and the Apr–Mar total. */
+  period?: string | null
+  cash_out_period?: number | null
   monthly_equivalent: number
   annualised: number
   active_count: number
@@ -255,6 +284,30 @@ export interface AnswerResult {
   stream?: StreamOut | null
 }
 
+/** One row of a "Split into several" answer for a `bundle` question. */
+export interface SplitItem {
+  vendor_key: string
+  product: string
+  amount: number
+}
+
+export interface AnswerBody {
+  choice: string
+  text?: string
+  items?: SplitItem[]
+}
+
+export interface BulkAnswer {
+  question_id: number
+  choice: string
+  text?: string
+}
+
+export interface BulkAnswerResult {
+  answered: number
+  engine: EngineSummary
+}
+
 export interface UpcomingItem extends StreamOut {
   due: string
 }
@@ -275,6 +328,109 @@ export interface Vendor {
   is_reseller: boolean
 }
 
+// ---- v2: auth, settings, aliases, reminders, share, audit ------------------
+
+export type Role = 'owner' | 'accountant' | 'viewer'
+export const ROLES: Role[] = ['owner', 'accountant', 'viewer']
+
+export interface User {
+  id: number
+  name: string
+  email: string
+}
+
+export interface AuthCompany {
+  id: number
+  name: string
+  role: Role
+}
+
+export interface AuthResult {
+  user: User
+  companies: AuthCompany[]
+}
+
+export interface InviteResult {
+  email: string
+  temp_password: string
+  role: Role
+}
+
+export type DigestDay = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'
+
+export interface ReminderDays {
+  monthly: number
+  quarterly: number
+  yearly: number
+}
+
+export interface CompanySettings {
+  name: string
+  gstin: string | null
+  fy_start_month: number
+  owner_phone: string | null
+  owner_email: string | null
+  accountant_email: string | null
+  whatsapp_enabled: boolean
+  email_enabled: boolean
+  reminder_days_before: ReminderDays
+  weekly_digest_day: DigestDay | null
+  short_name: string | null
+}
+
+export type CompanySettingsPatch = Partial<CompanySettings>
+
+export interface Alias {
+  id: number
+  /** Display text of the payee this rule applies to. */
+  pattern: string
+  vendor_name: string | null
+  product: string | null
+  created_at: string
+  hidden: boolean
+}
+
+export type ReminderChannel = 'whatsapp' | 'email'
+
+export interface ReminderPreview {
+  stream_id: number
+  vendor_name: string
+  product: string | null
+  amount: number
+  due: string
+  days_before: number
+  channel: ReminderChannel[]
+  will_send_on: string
+}
+
+export interface ReminderSendResult {
+  sent: { channel: ReminderChannel; to: string; ok: boolean; error?: string | null }[]
+}
+
+export interface ReminderLogEntry {
+  id: number
+  stream_id: number
+  vendor_name: string
+  channel: ReminderChannel
+  to: string
+  sent_at: string
+  status: string // "sent" | "failed" | "skipped_not_configured" | ...
+  message: string
+}
+
+export interface ShareText {
+  text: string
+}
+
+export interface AuditEvent {
+  id: number
+  at: string
+  user: string
+  action: string
+  target: string
+  detail: string
+}
+
 // ---------------------------------------------------------------------------
 
 export class ApiError extends Error {
@@ -286,6 +442,9 @@ export class ApiError extends Error {
 }
 
 const BASE = '/api'
+
+/** Fired when any non-auth request comes back 401 so the app can go to /login. */
+export const UNAUTHORIZED_EVENT = 'it-tracker:unauthorized'
 
 export function getAccessKey(): string {
   try { return localStorage.getItem('it-tracker.accessKey') ?? '' } catch { return '' }
@@ -300,17 +459,30 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const headers = new Headers(init?.headers ?? {})
     const key = getAccessKey()
     if (key) headers.set('X-Access-Key', key)
-    res = await fetch(BASE + path, { ...init, headers })
+    res = await fetch(BASE + path, { ...init, headers, credentials: 'same-origin' })
   } catch {
     throw new ApiError(0, 'Could not reach the server. Is the backend running on port 8000?')
   }
   if (res.status === 401) {
-    const entered = window.prompt('This IT Tracker needs an access key. Enter it to continue:')
-    if (entered) {
-      setAccessKey(entered.trim())
-      return request<T>(path, init)
+    let detail = ''
+    try {
+      const body = await res.clone().json()
+      if (body && typeof body.detail === 'string') detail = body.detail
+    } catch {
+      /* non-JSON body */
     }
-    throw new ApiError(401, 'Access key required.')
+    // Legacy gate: the server still runs with APP_ACCESS_KEY only. Ask once.
+    if (/access key required/i.test(detail)) {
+      const entered = window.prompt('This IT Tracker needs an access key. Enter it to continue:')
+      if (entered) {
+        setAccessKey(entered.trim())
+        return request<T>(path, init)
+      }
+      throw new ApiError(401, 'Access key required.')
+    }
+    // Normal case: not logged in (or session expired) → the auth provider sends the user to /login.
+    if (!path.startsWith('/auth/')) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
+    throw new ApiError(401, detail || 'Please log in.')
   }
   if (!res.ok) {
     let msg = `Request failed (${res.status})`
@@ -360,13 +532,20 @@ export const getCompany = (id: number) => request<Company>(`/companies/${id}`)
 // Upload & engine
 export function uploadFile(
   companyId: number,
-  args: { file: File; source_kind: SourceKind; account_label: string; is_personal: boolean },
+  args: {
+    file: File
+    source_kind: SourceKind
+    account_label: string
+    is_personal: boolean
+    pdf_password?: string
+  },
 ) {
   const fd = new FormData()
   fd.append('file', args.file)
   fd.append('source_kind', args.source_kind)
   fd.append('account_label', args.account_label)
   fd.append('is_personal', args.is_personal ? 'true' : 'false')
+  if (args.pdf_password) fd.append('pdf_password', args.pdf_password)
   return request<UploadResult>(`/companies/${companyId}/upload`, { method: 'POST', body: fd })
 }
 export const runEngine = (companyId: number) =>
@@ -377,8 +556,8 @@ export const listAccounts = (companyId: number) =>
   request<Account[]>(`/companies/${companyId}/accounts`)
 
 // Dashboard
-export const getDashboard = (companyId: number, month?: string) =>
-  request<Dashboard>(`/companies/${companyId}/dashboard${qs({ month })}`)
+export const getDashboard = (companyId: number, opts: { month?: string; fy?: number | string } = {}) =>
+  request<Dashboard>(`/companies/${companyId}/dashboard${qs(opts)}`)
 
 // Streams
 export const listStreams = (
@@ -399,11 +578,10 @@ export const confirmStream = (companyId: number, sid: number, accept: boolean) =
 // Questions
 export const listQuestions = (companyId: number, open = true) =>
   request<Question[]>(`/companies/${companyId}/questions${qs({ open })}`)
-export const answerQuestion = (
-  companyId: number,
-  qid: number,
-  body: { choice: string; text?: string },
-) => request<AnswerResult>(`/companies/${companyId}/questions/${qid}/answer`, json('POST', body))
+export const answerQuestion = (companyId: number, qid: number, body: AnswerBody) =>
+  request<AnswerResult>(`/companies/${companyId}/questions/${qid}/answer`, json('POST', body))
+export const answerBulk = (companyId: number, answers: BulkAnswer[]) =>
+  request<BulkAnswerResult>(`/companies/${companyId}/questions/answer-bulk`, json('POST', { answers }))
 
 // Upcoming
 export const getUpcoming = (companyId: number, days = 90) =>
@@ -411,3 +589,44 @@ export const getUpcoming = (companyId: number, days = 90) =>
 
 // Vendors
 export const listVendors = (q?: string) => request<Vendor[]>(`/vendors${qs({ q })}`)
+
+// ---- v2 routes -------------------------------------------------------------
+
+// Auth (cookie session)
+export const register = (body: { name: string; email: string; password: string; company_name: string }) =>
+  request<AuthResult>('/auth/register', json('POST', body))
+export const login = (body: { email: string; password: string }) =>
+  request<AuthResult>('/auth/login', json('POST', body))
+export const logout = () => request<void>('/auth/logout', { method: 'POST' })
+export const getMe = () => request<AuthResult>('/auth/me')
+export const inviteUser = (body: { company_id: number; email: string; role: Role }) =>
+  request<InviteResult>('/auth/invite', json('POST', body))
+
+// Company settings
+export const getSettings = (companyId: number) =>
+  request<CompanySettings>(`/companies/${companyId}/settings`)
+export const patchSettings = (companyId: number, body: CompanySettingsPatch) =>
+  request<CompanySettings>(`/companies/${companyId}/settings`, json('PATCH', body))
+export const deleteCompany = (companyId: number) =>
+  request<void>(`/companies/${companyId}`, { method: 'DELETE' })
+
+// Hidden payees / learned answers
+export const listAliases = (companyId: number) => request<Alias[]>(`/companies/${companyId}/aliases`)
+export const deleteAlias = (companyId: number, aliasId: number) =>
+  request<void>(`/companies/${companyId}/aliases/${aliasId}`, { method: 'DELETE' })
+
+// Reminders
+export const getReminderPreview = (companyId: number, days = 30) =>
+  request<ReminderPreview[]>(`/companies/${companyId}/reminders${qs({ days })}`)
+export const sendReminderNow = (companyId: number, streamId: number) =>
+  request<ReminderSendResult>(`/companies/${companyId}/reminders/send-now`, json('POST', { stream_id: streamId }))
+export const getReminderLog = (companyId: number, limit = 50) =>
+  request<ReminderLogEntry[]>(`/companies/${companyId}/reminders/log${qs({ limit })}`)
+
+// Owner share + export
+export const getShareText = (companyId: number) => request<ShareText>(`/companies/${companyId}/share-text`)
+export const exportUrl = (companyId: number) => `${BASE}/companies/${companyId}/export.xlsx`
+
+// Audit
+export const listEvents = (companyId: number, limit = 100) =>
+  request<AuditEvent[]>(`/companies/${companyId}/events${qs({ limit })}`)

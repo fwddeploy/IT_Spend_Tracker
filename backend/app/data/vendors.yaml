@@ -221,24 +221,98 @@ reseller_hint_words:
   - TECH
 
 # Known Indian resellers / partners and what they typically sell (grows with every deployment).
+# Matched as a substring of the cleaned payee. Only names of real, currently trading partners / distributors.
 resellers:
+  # --- SolidWorks / CAD / CAE VARs ---
   - {name: CADSPRO, sells: [solidworks]}
   - {name: BEACON INDIA, sells: [solidworks]}
+  - {name: BEACON ENGINEERING, sells: [solidworks]}
   - {name: CONCEPTIA, sells: [solidworks]}
   - {name: EGS COMPUTERS, sells: [solidworks, ptc]}
+  - {name: DESIGNTECH SYSTEMS, sells: [solidworks, autodesk, ptc]}
+  - {name: BEST ENGINEERING AIDS, sells: [solidworks]}
+  - {name: CAD MACRO, sells: [solidworks]}
+  - {name: CADMACRO, sells: [solidworks]}
   - {name: CADD CENTRE, sells: [solidworks, autodesk]}
+  - {name: CADGRAF, sells: [ansys, autodesk]}
+  - {name: CADFEM, sells: [ansys]}
+  - {name: ARK INFOSOLUTIONS, sells: [autodesk, ansys]}
   - {name: CAPRICOT, sells: [autodesk]}
   - {name: ARKANCE, sells: [autodesk]}
   - {name: ADROITEC, sells: [ptc]}
   - {name: NEILSOFT, sells: [ptc, autodesk]}
+  # --- SAP Business One partners ---
   - {name: UNEECOPS, sells: [sap_b1]}
   - {name: COGNITIVE, sells: [sap_b1]}
-  - {name: REDINGTON, sells: [microsoft365, quickheal, adobe]}
-  - {name: INGRAM MICRO, sells: [microsoft365, adobe, autodesk]}
-  - {name: SAVEX, sells: [microsoft365, quickheal]}
+  - {name: SILVER TOUCH, sells: [sap_b1]}
+  - {name: PRAXIS INFO, sells: [sap_b1]}
+  - {name: EMERGING ALLIANCE, sells: [sap_b1]}
+  - {name: GREYTRIX, sells: [sap_b1]}
+  - {name: SEIDOR, sells: [sap_b1]}
+  # --- Tally partners ---
   - {name: ANTRAWEB, sells: [tally]}
   - {name: MARK IT SOLUTIONS, sells: [tally]}
   - {name: TALLYSTACK, sells: [tally]}
+  - {name: SHWETA COMPUTERS, sells: [tally]}
+  - {name: CINNTRA, sells: [tally]}
+  - {name: RAO INFORMATION TECH, sells: [tally]}
+  - {name: NANDINI INFOSYS, sells: [tally]}
+  - {name: GSEVEN, sells: [tally]}
+  - {name: AMITA INFOTECH, sells: [tally]}
+  # --- Zoho partners ---
+  - {name: ENCAPTECHNO, sells: [zoho]}
+  - {name: CRM MASTERS, sells: [zoho]}
+  - {name: INFOMAZE, sells: [zoho]}
+  - {name: TARGET INTEGRATION, sells: [zoho]}
+  # --- National distributors (Microsoft CSP, Adobe, Seqrite/Quick Heal, Kaspersky, Autodesk) ---
+  - {name: REDINGTON, sells: [microsoft365, quickheal, adobe, autodesk]}
+  - {name: INGRAM MICRO, sells: [microsoft365, adobe, autodesk, kaspersky]}
+  - {name: SAVEX, sells: [microsoft365, quickheal, adobe]}
+  - {name: RASHI PERIPHERALS, sells: [microsoft365, quickheal, kaspersky]}
+  - {name: SUPERTRON, sells: [microsoft365, quickheal]}
+  - {name: COMPUAGE, sells: [microsoft365, quickheal, kaspersky]}
+  - {name: IRIS COMPUTERS, sells: [microsoft365, quickheal]}
+  - {name: TECH DATA, sells: [microsoft365, adobe, autodesk]}
+  - {name: TD SYNNEX, sells: [microsoft365, adobe, autodesk]}
+  - {name: NEOTERIC, sells: [microsoft365, apple]}
+  - {name: INFLOW TECHNOLOGIES, sells: [sophos, fortinet, trendmicro]}
+  - {name: IVALUE INFOSOLUTIONS, sells: [sophos, fortinet]}
+  - {name: TECHNOBIND, sells: [sophos, acronis]}
+  # --- Microsoft CSPs / system integrators (M365, Azure, Adobe, AV) ---
+  - {name: EMBEE, sells: [microsoft365, azure, adobe]}
+  - {name: SOFTLINE, sells: [microsoft365, azure, adobe]}
+  - {name: NOVENTIQ, sells: [microsoft365, azure, adobe]}
+  - {name: CRAYON, sells: [microsoft365, azure, adobe]}
+  - {name: SOFTCELL, sells: [microsoft365, adobe, autodesk]}
+  - {name: PC SOLUTIONS, sells: [microsoft365, azure]}
+  - {name: TEAM COMPUTERS, sells: [microsoft365, azure, quickheal]}
+  - {name: ALLIED DIGITAL, sells: [microsoft365, it_amc]}
+  - {name: DYNACONS, sells: [microsoft365, it_amc]}
+  - {name: ORIENT TECHNOLOGIES, sells: [microsoft365, azure]}
+  - {name: INSPIRA ENTERPRISE, sells: [microsoft365, sophos]}
+  - {name: PROGRESSIVE INFOTECH, sells: [microsoft365, azure, it_amc]}
+  - {name: QUADRASYSTEMS, sells: [microsoft365, azure]}
+  - {name: QUADRA SYSTEMS, sells: [microsoft365, azure]}
+  - {name: GALAXY OFFICE AUTOMATION, sells: [microsoft365, azure, it_amc]}
+  - {name: LOCUZ, sells: [microsoft365, azure]}
+  - {name: CLOUD4C, sells: [azure, aws, sap_b1]}
+  - {name: WYSETEK, sells: [microsoft365, azure]}
+  - {name: ESCONET, sells: [microsoft365, azure, it_amc]}
+  - {name: VELOCIS, sells: [microsoft365, it_amc]}
+  - {name: ASHTECH INFOTECH, sells: [microsoft365, azure]}
+  - {name: SECURE NETWORK SOLUTIONS, sells: [sophos, fortinet]}
+  - {name: SISL INFOTECH, sells: [microsoft365, azure]}
+
+# Per-seat list prices (Rs, monthly or yearly per user as billed). A stream amount within 1% of k x unit
+# (1 <= k <= 500) is reported as k seats at that unit (2.16).
+seat_prices:
+  - {vendor: microsoft365, unit: 145}
+  - {vendor: microsoft365, unit: 1450}
+  - {vendor: microsoft365, unit: 1740}
+  - {vendor: google_workspace, unit: 136.9}
+  - {vendor: google_workspace, unit: 236}
+  - {vendor: quickheal, unit: 590}
+  - {vendor: zoho, unit: 590}
 
 # Amount fingerprints: exact amounts that identify a product (incl. 18% GST where noted). Tolerance ±1%.
 fingerprints:
@@ -275,3 +349,9 @@ narration_hints:
 
 # Words in a reseller line-item that mean hardware (excluded from subscriptions)
 hardware_words: [LAPTOP, DESKTOP, PRINTER, TONER, CARTRIDGE, RAM, SSD, HDD, MONITOR, KEYBOARD, MOUSE, CABLE, ROUTER, SWITCH, UPS, BATTERY, CCTV, CAMERA, SERVER HARDWARE, MOTHERBOARD]
+
+# Words in a bill / narration that mean software or a service (a bill with hardware AND software words keeps its
+# software vendor and is flagged mixed_hardware_bill; hardware-only bills go to the "hardware" one-time bucket, 2.29)
+software_words: [LICENCE, LICENSE, SUBSCRIPTION, RENEWAL, RENEW, AMC, SUPPORT, ANNUAL, CLOUD, USER, USERS, SEAT, SEATS,
+                 SOFTWARE, ANTIVIRUS, SEQRITE, QUICK HEAL, KASPERSKY, M365, O365, OFFICE 365, MICROSOFT 365, WINDOWS, OFFICE,
+                 WORKSPACE, TALLY, TSS, SOLIDWORKS, AUTOCAD, ADOBE, ZOHO, HOSTING, DOMAIN, SSL, EMAIL, BACKUP]

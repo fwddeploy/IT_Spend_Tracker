@@ -75,13 +75,65 @@ export const STATUS_LABEL: Record<StreamStatus, string> = {
   active: 'Active',
   due_soon: 'Due soon',
   overdue: 'Overdue',
-  charge_missed: 'Charge missed',
+  charge_missed: 'Payment missed',
   stopped: 'Stopped',
   cancelled: 'Cancelled',
-  amc_lapsed: 'AMC lapsed',
+  amc_lapsed: 'AMC expired',
   one_time: 'One-time',
-  needs_confirm: 'Needs confirm',
-  dismissed: 'Dismissed',
+  needs_confirm: 'Is this a subscription?',
+  dismissed: 'Hidden',
+}
+
+/** Where a payment was seen, in plain words. */
+export const SOURCE_LABEL: Record<string, string> = {
+  bank: 'Bank statement',
+  card: 'Card statement',
+  tally: 'Tally',
+  manual: 'Added by hand',
+  personal: 'Personal account',
+}
+export function sourceLabel(s: string): string {
+  return SOURCE_LABEL[s] ?? humanize(s)
+}
+
+/** 0–100 confidence → High / Likely / Guess. */
+export function confidenceLabel(c: number | null | undefined): string {
+  if (c === null || c === undefined) return '—'
+  if (c >= 80) return 'High'
+  if (c >= 50) return 'Likely'
+  return 'Guess'
+}
+
+/** Plain-English fallbacks for engine flag keys when `flags_human` is missing. */
+export const FLAG_LABELS: Record<string, string> = {
+  rcm_gst_payable: 'You pay 18% GST on this yourself (reverse charge)',
+  price_hike: 'Price went up',
+  price_drop: 'Price came down',
+  cycle_from_invoice: 'Cycle read from the invoice',
+  supplier_changed: 'Supplier changed',
+  paid_from_personal: 'Paid from a personal account',
+  amount_varies: 'Amount changes each time',
+  catch_up_payment: 'Catch-up payment',
+  tally_unpaid: 'Invoice booked in Tally, not yet paid',
+  booked_not_paid: 'Invoice booked in Tally, not yet paid',
+  foreign_vendor: 'Foreign vendor (paid in another currency)',
+}
+export function flagLabel(f: string): string {
+  return FLAG_LABELS[f] ?? humanize(f)
+}
+
+const DIGEST_DAYS: Record<string, string> = {
+  mon: 'Monday',
+  tue: 'Tuesday',
+  wed: 'Wednesday',
+  thu: 'Thursday',
+  fri: 'Friday',
+  sat: 'Saturday',
+  sun: 'Sunday',
+}
+export function dayLabel(d: string | null | undefined): string {
+  if (!d) return 'Off'
+  return DIGEST_DAYS[d] ?? d
 }
 
 export const CATEGORY_LABELS: Record<string, string> = {

@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { listCompanies, type Company } from './api'
+import { listCompanies, type Company, type Role } from './api'
 import { errorText } from './useFetch'
+import { useAuth } from './auth'
 
 const LS_KEY = 'it-tracker.company_id'
 
@@ -31,6 +32,11 @@ interface CompanyCtx {
   error: string | null
   company: Company | null
   companyId: number | null
+  /** The logged-in user's role in the selected company (owner if unknown, e.g. access-key mode). */
+  role: Role
+  /** viewer = read only. */
+  canEdit: boolean
+  isOwner: boolean
   select: (id: number) => void
   reload: () => Promise<void>
   /** Add a freshly created company to the list and select it. */
@@ -44,6 +50,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [companyId, setCompanyId] = useState<number | null>(readStored)
+  const auth = useAuth()
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -58,9 +65,14 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  // (Re)load once we know who is logged in; clear on logout.
   useEffect(() => {
-    void reload()
-  }, [reload])
+    if (auth.status === 'authed') void reload()
+    else if (auth.status === 'anon') {
+      setCompanies([])
+      setLoading(false)
+    }
+  }, [reload, auth.status, auth.user?.id])
 
   // Default to first company if nothing stored or stored id no longer exists.
   useEffect(() => {
@@ -87,6 +99,11 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     [companies, companyId],
   )
 
+  const role: Role = useMemo(() => {
+    if (!company) return 'owner'
+    return auth.memberships.find((m) => m.id === company.id)?.role ?? 'owner'
+  }, [company, auth.memberships])
+
   const value = useMemo<CompanyCtx>(
     () => ({
       companies,
@@ -94,11 +111,14 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       error,
       company,
       companyId: company ? company.id : null,
+      role,
+      canEdit: role !== 'viewer',
+      isOwner: role === 'owner',
       select,
       reload,
       add,
     }),
-    [companies, loading, error, company, select, reload, add],
+    [companies, loading, error, company, role, select, reload, add],
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
