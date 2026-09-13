@@ -1,0 +1,7 @@
+# Shell scripts and Caddy config must stay LF, or they break on the Linux server
+# ("/bin/bash^M: bad interpreter") when they are edited or checked out on Windows.
+*.sh            text eol=lf
+deploy/Caddyfile text eol=lf
+Dockerfile      text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
